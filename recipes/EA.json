@@ -1,0 +1,19 @@
+{
+  "Name": "EA",
+  "PortableRoot": "{configDir}",
+  "Links": [
+    { "Name": "EA Desktop", "Source": "%ProgramFiles%\\Electronic Arts\\EA Desktop", "Target": "{portableRoot}\\ProgramFiles\\Electronic Arts\\EA Desktop", "Kind": "Junction", "MoveExisting": true, "OverwriteEmptySource": true, "ExistingSourceAction": "MoveToTargetOrBackup" },
+    { "Name": "EA Desktop ProgramData", "Source": "%ProgramData%\\EA Desktop", "Target": "{portableRoot}\\ProgramData\\EA Desktop", "Kind": "Junction", "MoveExisting": true, "OverwriteEmptySource": true, "ExistingSourceAction": "MoveToTargetOrBackup" },
+    { "Name": "Electronic Arts ProgramData", "Source": "%ProgramData%\\Electronic Arts", "Target": "{portableRoot}\\ProgramData\\Electronic Arts", "Kind": "Junction", "MoveExisting": true, "OverwriteEmptySource": true, "ExistingSourceAction": "MoveToTargetOrBackup" },
+    { "Name": "Electronic Arts (Local)", "Source": "%LOCALAPPDATA%\\Electronic Arts", "Target": "{portableRoot}\\Local\\Electronic Arts", "Kind": "Junction", "MoveExisting": true, "OverwriteEmptySource": true, "ExistingSourceAction": "MoveToTargetOrBackup" },
+    { "Name": "EA Games", "Source": "%ProgramFiles%\\EA Games", "Target": "{portableRoot}\\ProgramFiles\\EA Games", "Kind": "Junction", "MoveExisting": true, "OverwriteEmptySource": true, "ExistingSourceAction": "MoveToTargetOrBackup" }
+  ],
+  "RegistryFiles": [],
+  "Batches": [
+    { "Name": "EA", "Path": "{portableRoot}\\Run.cmd", "TargetExe": "%ProgramFiles%\\Electronic Arts\\EA Desktop\\EA Desktop\\EADesktop.exe", "Arguments": "%*", "WorkingDirectory": "%ProgramFiles%\\Electronic Arts\\EA Desktop\\EA Desktop" }
+  ],
+  "Tasks": [],
+  "Services": [],
+  "Games": [],
+  "KeepBackups": false
+}

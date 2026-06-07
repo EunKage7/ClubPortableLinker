@@ -1,0 +1,18 @@
+{
+  "Name": "Epic",
+  "PortableRoot": "{configDir}",
+  "Links": [
+    { "Name": "Epic Games", "Source": "%ProgramFiles%\\Epic Games", "Target": "{portableRoot}\\ProgramFiles\\Epic Games", "Kind": "Junction", "MoveExisting": true, "OverwriteEmptySource": true, "ExistingSourceAction": "MoveToTargetOrBackup" },
+    { "Name": "Epic Games (x86)", "Source": "%ProgramFiles(x86)%\\Epic Games", "Target": "{portableRoot}\\ProgramFilesX86\\Epic Games", "Kind": "Junction", "MoveExisting": true, "OverwriteEmptySource": true, "ExistingSourceAction": "MoveToTargetOrBackup" },
+    { "Name": "Epic ProgramData", "Source": "%ProgramData%\\Epic", "Target": "{portableRoot}\\ProgramData\\Epic", "Kind": "Junction", "MoveExisting": true, "OverwriteEmptySource": true, "ExistingSourceAction": "MoveToTargetOrBackup" },
+    { "Name": "EpicGamesLauncher (Local)", "Source": "%LOCALAPPDATA%\\EpicGamesLauncher", "Target": "{portableRoot}\\Local\\EpicGamesLauncher", "Kind": "Junction", "MoveExisting": true, "OverwriteEmptySource": true, "ExistingSourceAction": "MoveToTargetOrBackup" }
+  ],
+  "RegistryFiles": [],
+  "Batches": [
+    { "Name": "Epic", "Path": "{portableRoot}\\Run.cmd", "TargetExe": "%ProgramFiles%\\Epic Games\\Launcher\\Portal\\Binaries\\Win64\\EpicGamesLauncher.exe", "Arguments": "%*", "WorkingDirectory": "%ProgramFiles%\\Epic Games\\Launcher\\Portal\\Binaries\\Win64" }
+  ],
+  "Tasks": [],
+  "Services": [],
+  "Games": [],
+  "KeepBackups": false
+}

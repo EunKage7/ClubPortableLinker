@@ -1,0 +1,19 @@
+{
+  "Name": "BattleNet",
+  "PortableRoot": "{configDir}",
+  "Links": [
+    { "Name": "Battle.net", "Source": "%ProgramFiles(x86)%\\Battle.net", "Target": "{portableRoot}\\ProgramFilesX86\\Battle.net", "Kind": "Junction", "MoveExisting": true, "OverwriteEmptySource": true, "ExistingSourceAction": "MoveToTargetOrBackup" },
+    { "Name": "Battle.net ProgramData", "Source": "%ProgramData%\\Battle.net", "Target": "{portableRoot}\\ProgramData\\Battle.net", "Kind": "Junction", "MoveExisting": true, "OverwriteEmptySource": true, "ExistingSourceAction": "MoveToTargetOrBackup" },
+    { "Name": "Blizzard Entertainment", "Source": "%ProgramData%\\Blizzard Entertainment", "Target": "{portableRoot}\\ProgramData\\Blizzard Entertainment", "Kind": "Junction", "MoveExisting": true, "OverwriteEmptySource": true, "ExistingSourceAction": "MoveToTargetOrBackup" },
+    { "Name": "Battle.net (Local)", "Source": "%LOCALAPPDATA%\\Battle.net", "Target": "{portableRoot}\\Local\\Battle.net", "Kind": "Junction", "MoveExisting": true, "OverwriteEmptySource": true, "ExistingSourceAction": "MoveToTargetOrBackup" },
+    { "Name": "Battle.net (Roaming)", "Source": "%APPDATA%\\Battle.net", "Target": "{portableRoot}\\Roaming\\Battle.net", "Kind": "Junction", "MoveExisting": true, "OverwriteEmptySource": true, "ExistingSourceAction": "MoveToTargetOrBackup" }
+  ],
+  "RegistryFiles": [],
+  "Batches": [
+    { "Name": "Battle.net", "Path": "{portableRoot}\\Run.cmd", "TargetExe": "%ProgramFiles(x86)%\\Battle.net\\Battle.net.exe", "Arguments": "%*", "WorkingDirectory": "%ProgramFiles(x86)%\\Battle.net" }
+  ],
+  "Tasks": [],
+  "Services": [],
+  "Games": [],
+  "KeepBackups": false
+}
