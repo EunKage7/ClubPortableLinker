@@ -208,6 +208,13 @@ public sealed class LinkerSettings
     // сервера своя раскладка — поэтому список настраиваемый, а не зашит в код.
     public List<string> CatalogRoots { get; set; } = [];
 
+    // Геометрия окна между запусками (0 = не сохранена, открыть по центру).
+    public int WindowX { get; set; }
+    public int WindowY { get; set; }
+    public int WindowWidth { get; set; }
+    public int WindowHeight { get; set; }
+    public bool WindowMaximized { get; set; }
+
     private static string SettingsPath =>
         System.IO.Path.Combine(
             System.IO.Path.GetDirectoryName(Environment.ProcessPath) ?? AppContext.BaseDirectory,

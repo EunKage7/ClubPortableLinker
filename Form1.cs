@@ -44,8 +44,19 @@ public partial class Form1 : Form
     private Label? _statusLabel;
     private readonly CheckedListBox _games = new();
     private List<GameModule> _gamesBound = new();
-    private readonly TextBox _log = new();
+    // RichTextBox: журнал подсвечивает строки по смыслу (ошибки/успех/предупреждения) —
+    // в простом TextBox это невозможно.
+    private readonly RichTextBox _log = new();
     private readonly string _logFile = BuildLogFilePath();
+    // Живые пилюли шапки: статус игрового диска (его физически переключают!) и
+    // индикатор «операция выполняется».
+    private PillChip? _diskPill;
+    private PillChip? _busyPill;
+    private System.Windows.Forms.Timer? _diskTimer;
+    private string _baseTitle = "";
+    // Каталог пакетов: полный список (для строки-фильтра).
+    private readonly List<string> _catalogAll = [];
+    private readonly TextBox _catalogFilter = new();
     private readonly List<Button> _navButtons = [];
     private TabControl? _tabs;
     private string _lastAppNameForDestination = "Epic";
@@ -125,6 +136,7 @@ public partial class Form1 : Form
         AutoScroll = false;
         BackColor = Bg;
         StartPosition = FormStartPosition.CenterScreen;
+        RestoreWindowGeometry();
         try
         {
             Icon = CreateAppIcon();
@@ -172,6 +184,50 @@ public partial class Form1 : Form
         WireDropTarget(this);
         WireDropTarget(root);
         SelectTab(0);
+    }
+
+    // Размер/позиция окна между запусками: админ настраивает окно под свой монитор
+    // один раз. Восстанавливаем только если окно попадает на видимый экран.
+    private void RestoreWindowGeometry()
+    {
+        if (_settings.WindowWidth < 400 || _settings.WindowHeight < 300)
+        {
+            return;
+        }
+
+        var bounds = new Rectangle(_settings.WindowX, _settings.WindowY, _settings.WindowWidth, _settings.WindowHeight);
+        var visible = Screen.AllScreens.Any(s => s.WorkingArea.IntersectsWith(bounds));
+        if (!visible)
+        {
+            return; // монитор отключили — не открываемся за пределами экрана
+        }
+
+        StartPosition = FormStartPosition.Manual;
+        Bounds = bounds;
+        if (_settings.WindowMaximized)
+        {
+            WindowState = FormWindowState.Maximized;
+        }
+    }
+
+    protected override void OnFormClosing(FormClosingEventArgs e)
+    {
+        try
+        {
+            var b = WindowState == FormWindowState.Normal ? Bounds : RestoreBounds;
+            _settings.WindowX = b.X;
+            _settings.WindowY = b.Y;
+            _settings.WindowWidth = b.Width;
+            _settings.WindowHeight = b.Height;
+            _settings.WindowMaximized = WindowState == FormWindowState.Maximized;
+            _settings.Save();
+        }
+        catch
+        {
+            // сохранение геометрии не должно мешать закрытию
+        }
+
+        base.OnFormClosing(e);
     }
 
     // Стартовые сканы — в OnShown, а не в конструкторе:
@@ -297,12 +353,102 @@ public partial class Form1 : Form
         };
         var admin = IsCurrentProcessAdministrator();
         var hasClientResources = !string.IsNullOrWhiteSpace(DetectClientResourcesRoot());
+
+        // Кнопка справки — открывает GUIDE.md рядом с программой (правый край).
+        var help = SecondaryButton("?");
+        help.Width = 36;
+        help.Height = 32;
+        help.Margin = new Padding(9, 6, 0, 0);
+        help.Click += (_, _) => OpenGuide();
+        _tips.SetToolTip(help, "Открыть гайд (GUIDE.md): сборка, применение, игры и reg");
+        pills.Controls.Add(help);
+
         pills.Controls.Add(StatusPill(Environment.MachineName, Accent2));
         pills.Controls.Add(StatusPill(admin ? "admin" : "без admin", admin ? Success : Warning));
         // Маркер по смыслу: зелёный при наличии, янтарный — когда ClientResources не найдены.
         pills.Controls.Add(StatusPill(hasClientResources ? "ClientResources OK" : "ClientResources нет", hasClientResources ? Success : Warning));
+
+        // Игровой диск — ЖИВАЯ пилюля: в клубе D:/E: физически переключают, и пропавший
+        // диск — главная причина «всё сломалось». Обновляется таймером.
+        _diskPill = new PillChip("диск…", TextMuted)
+        {
+            Width = 150,
+            Height = 32,
+            Margin = new Padding(9, 6, 0, 0)
+        };
+        _tips.SetToolTip(_diskPill, "Игровой диск (несистемный, с макс. свободным местом). Сюда собираются пакеты и ставятся игры.");
+        pills.Controls.Add(_diskPill);
+        UpdateDiskPill();
+        _diskTimer = new System.Windows.Forms.Timer { Interval = 15000 };
+        _diskTimer.Tick += (_, _) => UpdateDiskPill();
+        _diskTimer.Start();
+
+        // Индикатор «операция выполняется» — виден из любой вкладки.
+        _busyPill = new PillChip("⏳ выполняется…", Accent)
+        {
+            Width = 150,
+            Height = 32,
+            Margin = new Padding(9, 6, 0, 0),
+            Visible = false
+        };
+        pills.Controls.Add(_busyPill);
+
         header.Controls.Add(pills, 2, 0);
         return header;
+    }
+
+    private void OpenGuide()
+    {
+        try
+        {
+            var dir = Path.GetDirectoryName(Environment.ProcessPath) ?? AppContext.BaseDirectory;
+            var guide = Path.Combine(dir, "GUIDE.md");
+            if (File.Exists(guide))
+            {
+                Process.Start(new ProcessStartInfo(guide) { UseShellExecute = true });
+                return;
+            }
+
+            MessageBox.Show(this,
+                "GUIDE.md не найден рядом с программой.\n\nКоротко: «① Создать пакет» — собрать портабл (данные переезжают на игровой диск, на C: остаются ссылки); «② Применить/Проверить» — применить и проверить готовый пакет; «③ Игры и reg» — затащить регистрацию игры (D:\\Games) в пакет; «④ Библиотека» — каталог пакетов и рецепты. В клубе запуск — Run.cmd из корня пакета.",
+                "Справка", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+        catch (Exception ex)
+        {
+            Append("ОШИБКА: не удалось открыть гайд — " + ex.Message);
+        }
+    }
+
+    private void UpdateDiskPill()
+    {
+        if (_diskPill is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var sysRoot = Path.GetPathRoot(Environment.SystemDirectory) ?? @"C:\";
+            var best = DriveInfo.GetDrives()
+                .Where(d => d.DriveType == DriveType.Fixed && d.IsReady)
+                .Where(d => !string.Equals(d.Name, sysRoot, StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(d => d.AvailableFreeSpace)
+                .FirstOrDefault();
+            if (best is null)
+            {
+                _diskPill.Text = "игрового диска НЕТ";
+                _diskPill.Marker = Color.FromArgb(255, 128, 140);
+            }
+            else
+            {
+                _diskPill.Text = $"{best.Name.TrimEnd('\\')} {best.AvailableFreeSpace / (1024L * 1024 * 1024)} ГБ свободно";
+                _diskPill.Marker = Success;
+            }
+        }
+        catch
+        {
+            // статусная пилюля не должна ничего ронять
+        }
     }
 
     private Control BuildSidebar()
@@ -393,7 +539,7 @@ public partial class Form1 : Form
 
         _log.Dock = DockStyle.Fill;
         _log.Multiline = true;
-        _log.ScrollBars = ScrollBars.Vertical;
+        _log.ScrollBars = RichTextBoxScrollBars.Vertical;
         _log.ReadOnly = true;
         _log.WordWrap = true;
         _log.Font = new Font("Consolas", 9.4F);
@@ -418,12 +564,35 @@ public partial class Form1 : Form
             BackColor = Color.Transparent,
             TextAlign = ContentAlignment.MiddleLeft
         };
-        var fullLogButton = SecondaryButton("Полный журнал ⤢");
+        // Компактные кнопки-иконки: место в шапке журнала ограничено (правая колонка 320px).
+        var fullLogButton = SecondaryButton("⤢");
         fullLogButton.Dock = DockStyle.Right;
-        fullLogButton.Width = 180;
+        fullLogButton.Width = 42;
         fullLogButton.Click += (_, _) => OpenFullLog();
-        // Fill добавляем первым (докуется последним и занимает остаток), кнопку — справа.
+        _tips.SetToolTip(fullLogButton, "Открыть журнал в большом окне");
+        var copyLogButton = SecondaryButton("⧉");
+        copyLogButton.Dock = DockStyle.Right;
+        copyLogButton.Width = 42;
+        copyLogButton.Click += (_, _) =>
+        {
+            try
+            {
+                if (_log.TextLength > 0) { Clipboard.SetText(_log.Text); Append("Журнал скопирован в буфер."); }
+            }
+            catch { /* буфер занят другим приложением — не критично */ }
+        };
+        _tips.SetToolTip(copyLogButton, "Скопировать весь журнал в буфер обмена");
+        var clearLogButton = SecondaryButton("✕");
+        clearLogButton.Dock = DockStyle.Right;
+        clearLogButton.Width = 42;
+        clearLogButton.Click += (_, _) => _log.Clear();
+        _tips.SetToolTip(clearLogButton, "Очистить журнал на экране (файл лога сохраняется)");
+        // Fill добавляем первым (докуется последним и занимает остаток); правые кнопки —
+        // в порядке clear, copy, full: докуются с конца списка, поэтому справа налево
+        // получится [⤢][⧉][✕].
         header.Controls.Add(headerLabel);
+        header.Controls.Add(clearLogButton);
+        header.Controls.Add(copyLogButton);
         header.Controls.Add(fullLogButton);
 
         panel.Controls.Add(console);
@@ -994,10 +1163,11 @@ public partial class Form1 : Form
         {
             Dock = DockStyle.Fill,
             ColumnCount = 1,
-            RowCount = 3,
+            RowCount = 4,
             BackColor = Surface
         };
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
 
@@ -1009,13 +1179,24 @@ public partial class Form1 : Form
             TextAlign = ContentAlignment.MiddleLeft
         }, 0, 0);
 
+        // Строка-фильтр: на сервере пакетов десятки — листать список дольше, чем набрать
+        // пару букв. Фильтр по подстроке пути, без учёта регистра.
+        _catalogFilter.Dock = DockStyle.Fill;
+        _catalogFilter.BackColor = Bg;
+        _catalogFilter.ForeColor = TextPrimary;
+        _catalogFilter.BorderStyle = BorderStyle.FixedSingle;
+        _catalogFilter.PlaceholderText = "Фильтр: часть имени или пути пакета…";
+        _catalogFilter.Margin = new Padding(0, 4, 0, 4);
+        _catalogFilter.TextChanged += (_, _) => ApplyCatalogFilter();
+        layout.Controls.Add(_catalogFilter, 0, 1);
+
         _packageCatalog.Dock = DockStyle.Fill;
         _packageCatalog.BackColor = Bg;
         _packageCatalog.ForeColor = TextPrimary;
         _packageCatalog.BorderStyle = BorderStyle.None;
         _packageCatalog.Font = new Font("Consolas", 9.5F);
         _packageCatalog.DoubleClick += (_, _) => OpenSelectedCatalogPackage();
-        layout.Controls.Add(_packageCatalog, 0, 1);
+        layout.Controls.Add(_packageCatalog, 0, 2);
 
         var actions = new FlowLayoutPanel
         {
@@ -1051,10 +1232,32 @@ public partial class Form1 : Form
         verifyAll.Click += (_, _) => VerifyAllCatalogPackages();
         _tips.SetToolTip(verifyAll, "Проверить целостность ВСЕХ пакетов из списка (junction/reg/манифест) и показать итог в журнале. Только чтение.");
         actions.Controls.AddRange(new Control[] { addFolder, scan, open, verify, verifyAll });
-        layout.Controls.Add(actions, 0, 2);
+        layout.Controls.Add(actions, 0, 3);
 
         box.Controls.Add(layout);
         return box;
+    }
+
+    // Перезаполняет видимый список из полного (_catalogAll) с учётом строки-фильтра.
+    private void ApplyCatalogFilter()
+    {
+        var filter = _catalogFilter.Text.Trim();
+        _packageCatalog.BeginUpdate();
+        try
+        {
+            _packageCatalog.Items.Clear();
+            foreach (var item in _catalogAll)
+            {
+                if (filter.Length == 0 || item.Contains(filter, StringComparison.OrdinalIgnoreCase))
+                {
+                    _packageCatalog.Items.Add(item);
+                }
+            }
+        }
+        finally
+        {
+            _packageCatalog.EndUpdate();
+        }
     }
 
     private void AddCatalogFolder()
@@ -1752,7 +1955,14 @@ public partial class Form1 : Form
 
     private sealed class PillChip : Control
     {
-        private readonly Color _marker;
+        private Color _marker;
+
+        // Маркер и текст меняются на лету (живые пилюли: игровой диск, busy-индикатор).
+        public Color Marker
+        {
+            get => _marker;
+            set { _marker = value; Invalidate(); }
+        }
 
         public PillChip(string text, Color marker)
         {
@@ -1761,6 +1971,12 @@ public partial class Form1 : Form
             SetStyle(ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.SupportsTransparentBackColor, true);
             BackColor = Color.Transparent;
             Font = new Font("Segoe UI Semibold", 9F);
+        }
+
+        protected override void OnTextChanged(EventArgs e)
+        {
+            base.OnTextChanged(e);
+            Invalidate();
         }
 
         protected override void OnPaint(PaintEventArgs e)
@@ -1834,7 +2050,7 @@ public partial class Form1 : Form
         _statusLabel.Text =
             "Система: " + (IsCurrentProcessAdministrator() ? "готово" : "нужен admin") + Environment.NewLine +
             "ClientResources: " + (string.IsNullOrWhiteSpace(_clientResources.Text) ? "автопоиск" : _clientResources.Text) + Environment.NewLine +
-            "Пакетов в каталоге: " + _packageCatalog.Items.Count;
+            "Пакетов в каталоге: " + _catalogAll.Count;
     }
 
     private void SelectTab(int index)
@@ -1930,16 +2146,17 @@ public partial class Form1 : Form
 
                 BeginInvoke(() =>
                 {
-                    _packageCatalog.Items.Clear();
-                    foreach (var root in task.Result)
-                    {
-                        _packageCatalog.Items.Add(root);
-                    }
+                    _catalogAll.Clear();
+                    _catalogAll.AddRange(task.Result);
+                    ApplyCatalogFilter();
 
                     UpdateStatusCard();
                     if (verbose)
                     {
-                        Append($"Каталог обновлён. Найдено пакетов: {_packageCatalog.Items.Count}.");
+                        Append($"Каталог обновлён. Найдено пакетов: {_catalogAll.Count}." +
+                            (_packageCatalog.Items.Count != _catalogAll.Count
+                                ? $" Показано по фильтру: {_packageCatalog.Items.Count}."
+                                : ""));
                     }
                 });
             }
@@ -2578,6 +2795,7 @@ public partial class Form1 : Form
             FlatAppearance.BorderSize = 0;
             FlatAppearance.MouseOverBackColor = Color.Transparent;
             FlatAppearance.MouseDownBackColor = Color.Transparent;
+            Cursor = Cursors.Hand; // кликабельность видна сразу
             SetStyle(
                 ControlStyles.OptimizedDoubleBuffer |
                 ControlStyles.AllPaintingInWmPaint |
@@ -3089,6 +3307,7 @@ public partial class Form1 : Form
 
         _busy = true;
         Cursor = Cursors.WaitCursor;
+        SetBusyIndicator(true);
         try
         {
             var result = await Task.Run(work);
@@ -3106,8 +3325,26 @@ public partial class Form1 : Form
         {
             _busy = false;
             Cursor = Cursors.Default;
+            SetBusyIndicator(false);
             onFinally?.Invoke();
         }
+    }
+
+    // Видимый признак фоновой операции: пилюля в шапке + суффикс в заголовке окна
+    // (виден в панели задач даже из другого приложения).
+    private void SetBusyIndicator(bool busy)
+    {
+        if (string.IsNullOrEmpty(_baseTitle))
+        {
+            _baseTitle = Text;
+        }
+
+        if (_busyPill is not null)
+        {
+            _busyPill.Visible = busy;
+        }
+
+        Text = busy ? _baseTitle + " — выполняется…" : _baseTitle;
     }
 
     private bool TryConfirmAutoApply()
@@ -3663,7 +3900,12 @@ public partial class Form1 : Form
         }
 
         var line = $"[{DateTime.Now:HH:mm:ss}] {message}{Environment.NewLine}";
+        // Подсветка по смыслу: ошибки видно сразу, не вычитывая весь журнал.
+        _log.SelectionStart = _log.TextLength;
+        _log.SelectionLength = 0;
+        _log.SelectionColor = ClassifyLogColor(message);
         _log.AppendText(line);
+        _log.SelectionColor = _log.ForeColor;
         _log.SelectionStart = _log.TextLength;
         _log.ScrollToCaret();
 
@@ -3678,6 +3920,40 @@ public partial class Form1 : Form
                 // запись в файл лога не критична
             }
         }
+    }
+
+    private Color ClassifyLogColor(string message)
+    {
+        if (message.Contains("ОШИБКА", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("FAIL", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("Отказ", StringComparison.OrdinalIgnoreCase))
+        {
+            return Color.FromArgb(255, 128, 140); // мягкий красный — читаем на тёмном
+        }
+
+        if (message.StartsWith("✔", StringComparison.Ordinal) ||
+            message.Contains("VERIFY OK", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("успеш", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("Готово", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("готов:", StringComparison.OrdinalIgnoreCase))
+        {
+            return Success;
+        }
+
+        if (message.Contains("Внимание", StringComparison.OrdinalIgnoreCase) ||
+            message.StartsWith("⚠", StringComparison.Ordinal) ||
+            message.Contains("ПРОПУСК", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("Пропущен", StringComparison.OrdinalIgnoreCase))
+        {
+            return Accent2;
+        }
+
+        if (message.StartsWith("⏳", StringComparison.Ordinal))
+        {
+            return TextMuted;
+        }
+
+        return _log.ForeColor;
     }
 
     private static string BuildLogFilePath()

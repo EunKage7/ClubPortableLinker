@@ -13,6 +13,8 @@
 
   <ItemGroup>
     <None Update="README.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <!-- GUIDE.md едет с программой: кнопка «?» в шапке открывает его. -->
+    <None Update="GUIDE.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>
