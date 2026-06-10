@@ -37,7 +37,13 @@ public static partial class PackageBuilder
         log($"Копирование portable-папки: {destination}");
         CopyDirectory(source, destination, log);
         PatchRegistryFiles(destination, profile, log);
-        PortableEngine.Execute(profile, new ExecutionOptions(true, OperationMode.Batches), log);
+        var batchResult = PortableEngine.Execute(profile, new ExecutionOptions(true, OperationMode.Batches), log);
+        if (!batchResult.Success)
+        {
+            // Раньше результат отбрасывался: ошибка записи Run.cmd логировалась, но
+            // --pack печатал «Настройки записаны» и возвращал 0 — ложный успех.
+            throw new InvalidOperationException("Не удалось записать Run.cmd/Stop.cmd — пакет неполный (см. лог выше).");
+        }
 
         var config = new PortableConfig { Profiles = [profile] };
         var configPath = ConfigStore.SavePackage(destination, config);

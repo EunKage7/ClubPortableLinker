@@ -38,7 +38,10 @@ public static partial class AutoPortableBuilder
         "report", "helper", "service", "redist", "directx", "repair"
     ];
 
-    private static readonly string[] TokenStopWords =
+    // internal: используется и RegistryGameCollector — токены захвата reg игры
+    // проходят тот же стоп-фильтр (без него игра «EVE Online» давала токен «Online»,
+    // который reg-поиском утаскивал ключи посторонних вендоров).
+    internal static readonly string[] TokenStopWords =
     [
         "program", "files", "launcher", "setup", "installer", "app", "game", "games",
         "client", "online", "service", "services", "x64", "x86"
@@ -1370,19 +1373,32 @@ exit /b 0
                                          link.Target.Contains("RAGEMP", StringComparison.OrdinalIgnoreCase));
     }
 
+    // Сегмент пути ровно равен name (\Steam\ или …\Steam в конце): подстрочный Contains
+    // ловил «SteamWorld Dig», «Steamworks Shared» и т.п. — и чужой пакет «подтверждал»
+    // Steam, после чего УСТАНОВЛЕННЫЙ Steam с машины физически утаскивался в этот пакет.
+    private static bool HasPathSegment(string path, string name)
+    {
+        var trimmed = path.TrimEnd('\\', '/');
+        return trimmed.EndsWith("\\" + name, StringComparison.OrdinalIgnoreCase)
+            || trimmed.Contains("\\" + name + "\\", StringComparison.OrdinalIgnoreCase);
+    }
+
     private static bool IsSteam(AppProfile profile, IEnumerable<string> paths)
     {
-        return profile.Name.Contains("Steam", StringComparison.OrdinalIgnoreCase)
-            || paths.Any(path => path.Contains("Steam", StringComparison.OrdinalIgnoreCase))
-            || profile.Links.Any(link => link.Source.Contains("Steam", StringComparison.OrdinalIgnoreCase) ||
-                                         link.Target.Contains("Steam", StringComparison.OrdinalIgnoreCase));
+        return profile.Name.Equals("Steam", StringComparison.OrdinalIgnoreCase)
+            || profile.Name.StartsWith("Steam ", StringComparison.OrdinalIgnoreCase)
+            || paths.Any(path => HasPathSegment(path, "Steam"))
+            || profile.Links.Any(link => HasPathSegment(link.Source, "Steam") ||
+                                         HasPathSegment(link.Target, "Steam"));
     }
 
     private static bool IsRiot(AppProfile profile, IEnumerable<string> paths)
     {
+        // «League of Legends», а не голое «League»: пакет «Rocket League» подтверждал
+        // Riot и утаскивал установленный Riot Client в чужой пакет.
         return profile.Name.Contains("Riot", StringComparison.OrdinalIgnoreCase)
             || profile.Name.Contains("Valorant", StringComparison.OrdinalIgnoreCase)
-            || profile.Name.Contains("League", StringComparison.OrdinalIgnoreCase)
+            || profile.Name.Contains("League of Legends", StringComparison.OrdinalIgnoreCase)
             || paths.Any(path => path.Contains("Riot Games", StringComparison.OrdinalIgnoreCase) ||
                                  path.Contains("Valorant", StringComparison.OrdinalIgnoreCase))
             || profile.Links.Any(link => link.Source.Contains("Riot Games", StringComparison.OrdinalIgnoreCase) ||
@@ -1408,7 +1424,9 @@ exit /b 0
 
     private static bool IsBattleNet(AppProfile profile, IEnumerable<string> paths)
     {
-        return profile.Name.Contains("Battle", StringComparison.OrdinalIgnoreCase)
+        // «Battle.net», а не голое «Battle»: пакет «Battlefield» подтверждал Battle.net
+        // и утаскивал установленный Battle.net с машины в чужой пакет.
+        return profile.Name.Contains("Battle.net", StringComparison.OrdinalIgnoreCase)
             || profile.Name.Contains("Blizzard", StringComparison.OrdinalIgnoreCase)
             || paths.Any(path => path.Contains("Battle.net", StringComparison.OrdinalIgnoreCase) ||
                                  path.Contains("Blizzard Entertainment", StringComparison.OrdinalIgnoreCase))
@@ -3117,11 +3135,6 @@ exit /b 0
         return score;
     }
 
-    private static void ExportRegistry(AppProfile profile, string portableRoot, IReadOnlyCollection<string> tokens, Action<string> log)
-    {
-        ExportRegistry(profile, portableRoot, tokens, new HashSet<string>(StringComparer.OrdinalIgnoreCase), log);
-    }
-
     private static void ExportRegistry(AppProfile profile, string portableRoot, IReadOnlyCollection<string> tokens, ISet<string> confirmed, Action<string> log)
     {
         var registryRoot = Path.Combine(portableRoot, ConfigStore.PortableDirectoryName, "Registry");
@@ -3192,17 +3205,19 @@ exit /b 0
         (@"\Lesta", "Lesta"),
         ("Riot Games", "Riot"),
         ("Battlestate Games", "BattleState"),
-        (@"\4game", "4game"), ("Innova", "4game"),
+        (@"\4game", "4game"), (@"\Innova", "4game"),
         ("BlueStacks", "BlueStacks"),
         ("Roberts Space Industries", "RSI"), ("Cloud Imperium", "RSI"),
         ("RAGE-MP", "RAGEMP"),
+        ("FACEIT", "FACEIT"),
+        ("VK Play", "VKPlay"), ("VKPlay", "VKPlay"), ("Mail.Ru", "VKPlay"),
     ];
 
     private static bool IsForeignLauncherKey(string key, ISet<string> confirmed, Action<string> log)
     {
         foreach (var (fragment, app) in ForeignVendorFragments)
         {
-            if (key.Contains(fragment, StringComparison.OrdinalIgnoreCase) && !confirmed.Contains(app))
+            if (ContainsVendorFragment(key, fragment) && !confirmed.Contains(app))
             {
                 log($"Пропущен чужой ключ ({app}, не собирается): {key}");
                 return true;
@@ -3210,6 +3225,30 @@ exit /b 0
         }
 
         return false;
+    }
+
+    // Фрагмент должен заканчиваться на ГРАНИЦЕ сегмента пути (дальше '\' или конец):
+    // голый Contains ложно метил «…\Original War» как Origin (EA) и «…\Innovative Soft»
+    // как Innova (4game) — ключи СВОЕЙ программы выкидывались из экспорта как чужие.
+    private static bool ContainsVendorFragment(string key, string fragment)
+    {
+        var start = 0;
+        while (true)
+        {
+            var idx = key.IndexOf(fragment, start, StringComparison.OrdinalIgnoreCase);
+            if (idx < 0)
+            {
+                return false;
+            }
+
+            var end = idx + fragment.Length;
+            if (end >= key.Length || key[end] == '\\' || key[end] == ' ')
+            {
+                return true;
+            }
+
+            start = idx + 1;
+        }
     }
 
     private static IEnumerable<string> SearchRegistryKeys(IReadOnlyCollection<string> tokens, Action<string> log)
@@ -3303,14 +3342,22 @@ exit /b 0
             return false;
         }
 
-        if (!key.Contains(token, StringComparison.OrdinalIgnoreCase))
+        // Для Uninstall-ветки токен должен быть в ИМЕНИ листового подключа
+        // (…\Uninstall\<имя с токеном>, без дальнейшей вложенности). Прежняя форма
+        // была тавтологией (всегда true) — фильтр не работал, и /f-поиск мог
+        // протащить «не свои» uninstall-записи.
+        const string uninstallMarker = @"\microsoft\windows\currentversion\uninstall";
+        var lower = NormalizeRegistryKey(key).ToLowerInvariant();
+        var idx = lower.IndexOf(uninstallMarker, StringComparison.Ordinal);
+        if (idx < 0)
         {
             return true;
         }
 
-        var lower = key.ToLowerInvariant();
-        return !lower.Contains(@"\microsoft\windows\currentversion\uninstall\", StringComparison.OrdinalIgnoreCase)
-            || lower.Contains(token.ToLowerInvariant(), StringComparison.OrdinalIgnoreCase);
+        var leaf = lower[(idx + uninstallMarker.Length)..].TrimStart('\\');
+        return leaf.Length > 0
+            && !leaf.Contains('\\')
+            && leaf.Contains(token.ToLowerInvariant(), StringComparison.Ordinal);
     }
 
     private static bool IsTooBroadRegistryKey(string key)

@@ -80,7 +80,12 @@ public static class Cli
 
             if (args.Contains("--verify-package", StringComparer.OrdinalIgnoreCase))
             {
-                var packageFolder = ValueAfter(args, "--package") ?? configPath;
+                // Без --package раньше молча проверялся profiles.json в текущей папке —
+                // невнятный «manifest_missing» вместо понятной ошибки об аргументе.
+                var packageFolder = ValueAfter(args, "--package")
+                    ?? (ValueAfter(args, "--config") is not null
+                        ? configPath
+                        : throw new InvalidOperationException("Не указан --package для --verify-package."));
                 var report = PackageVerifier.Verify(packageFolder, ValueAfter(args, "--profile"));
                 if (args.Contains("--json", StringComparer.OrdinalIgnoreCase))
                 {
@@ -118,7 +123,10 @@ public static class Cli
 
                 PackageArchiver.CreateZip(packageRoot, outputZip, output.WriteLine);
                 output.WriteLine($"ZIP создан: {Path.GetFullPath(outputZip)}");
-                return report.HasErrors ? 2 : 0;
+                // Сюда доходим либо без ошибок, либо с явным --force («упаковать как
+                // есть»). ZIP создан — это успех; раньше с --force возвращалось 2,
+                // и по exit-коду исход был неотличим от «ZIP не создан».
+                return 0;
             }
 
             if (args.Contains("--reg-snapshot", StringComparer.OrdinalIgnoreCase))
@@ -141,8 +149,15 @@ public static class Cli
                     ?? throw new InvalidOperationException("Не указан --game для --reg-capture.");
                 var snapshotPath = ValueAfter(args, "--snapshot");
                 RegistryKeySnapshot? snapshot = null;
-                if (!string.IsNullOrWhiteSpace(snapshotPath) && File.Exists(snapshotPath))
+                if (!string.IsNullOrWhiteSpace(snapshotPath))
                 {
+                    // Опечатка в пути снимка раньше игнорировалась МОЛЧА — захват шёл
+                    // без baseline и давал неполный результат без предупреждения.
+                    if (!File.Exists(snapshotPath))
+                    {
+                        throw new InvalidOperationException($"Файл снимка не найден: {snapshotPath}");
+                    }
+
                     snapshot = JsonSerializer.Deserialize<RegistryKeySnapshot>(File.ReadAllText(snapshotPath), JsonOptions());
                 }
 
@@ -150,6 +165,7 @@ public static class Cli
                     packageFolder,
                     ValueAfter(args, "--profile") ?? "",
                     gameName,
+                    ValueAfter(args, "--game-folder") ?? "",
                     snapshot,
                     output.WriteLine);
                 return count > 0 ? 0 : 2;
@@ -186,12 +202,14 @@ public static class Cli
 
                 // Без --game --apply перенёс бы ВСЕ новые папки (в т.ч. посторонние,
                 // появившиеся между снимками). Требуем --game или явное --yes.
+                var deltaRefused = false;
                 if (deltaApply && string.IsNullOrWhiteSpace(deltaGame) && !args.Contains("--yes", StringComparer.OrdinalIgnoreCase))
                 {
                     output.WriteLine("Отказ: --apply без --game перенесёт ВСЕ новые папки (возможны посторонние).");
                     output.WriteLine("Уточните игру: --game \"Имя\", либо подтвердите перенос всего: --yes.");
                     output.WriteLine("Сейчас покажу превью без переноса:");
                     deltaApply = false;
+                    deltaRefused = true;
                 }
 
                 AutoPortableBuilder.CaptureDelta(
@@ -201,7 +219,9 @@ public static class Cli
                     deltaGame,
                     deltaApply,
                     output.WriteLine);
-                return 0;
+                // Запрошенный --apply НЕ выполнен (отказ) — код 2, а не «успех»:
+                // скрипты автоматизации не должны считать перенос сделанным.
+                return deltaRefused ? 2 : 0;
             }
 
             if (args.Contains("--preview", StringComparer.OrdinalIgnoreCase))
@@ -230,7 +250,10 @@ public static class Cli
 
             if (args.Contains("--list-recipes", StringComparer.OrdinalIgnoreCase))
             {
-                foreach (var r in RecipeStore.List(ValueAfter(args, "--shared")))
+                // Как и --update-recipes: без явного --shared берём сетевую папку из
+                // настроек — иначе сетевые рецепты в списке «терялись».
+                var sharedList = ValueAfter(args, "--shared") ?? LinkerSettings.Load().SharedRecipesPath;
+                foreach (var r in RecipeStore.List(sharedList))
                 {
                     output.WriteLine($"{(r.Shared ? "[сеть]" : "[лок.]")} {r.Name}  ({r.Path})");
                 }
@@ -253,14 +276,33 @@ public static class Cli
                 var destination = ValueAfter(args, "--destination")
                     ?? throw new InvalidOperationException("Не указан --destination для --apply-recipe.");
                 var recipeProfile = RecipeStore.Load(recipePath);
+                // В назначении уже живёт пакет? Перезапись манифеста стёрла бы его
+                // профили/захваченные reg игр без следа — требуем явный --force.
+                if (ConfigStore.HasHiddenManifest(destination) &&
+                    !args.Contains("--force", StringComparer.OrdinalIgnoreCase))
+                {
+                    output.WriteLine($"Отказ: в «{destination}» уже есть пакет (manifest). Его профили и reg игр были бы потеряны.");
+                    output.WriteLine("Укажите другую папку либо добавьте --force для перезаписи манифеста.");
+                    return 2;
+                }
+
                 var savedPath = ConfigStore.SavePackage(destination, new PortableConfig { Profiles = [recipeProfile] });
                 output.WriteLine($"Из рецепта «{recipeProfile.Name}» создан пакет: {destination}");
                 output.WriteLine($"Манифест: {savedPath}");
                 if (args.Contains("--apply", StringComparer.OrdinalIgnoreCase))
                 {
+                    // Раньше режим был зашит (All): --safe/--no-links/--mode молча
+                    // игнорировались — пользователь просил safe, а ссылки всё равно ставились.
+                    var recipeMode = ParseMode(ValueAfter(args, "--mode"));
+                    if (args.Contains("--safe", StringComparer.OrdinalIgnoreCase) ||
+                        args.Contains("--no-links", StringComparer.OrdinalIgnoreCase))
+                    {
+                        recipeMode = OperationMode.SafeMode;
+                    }
+
                     var loaded = ConfigStore.Load(destination);
                     var built = loaded.FindProfile(recipeProfile.Name);
-                    var res = PortableEngine.Execute(built, new ExecutionOptions(true, OperationMode.All), output.WriteLine);
+                    var res = PortableEngine.Execute(built, new ExecutionOptions(true, recipeMode), output.WriteLine);
                     return res.Success ? 0 : 2;
                 }
 
@@ -308,7 +350,9 @@ public static class Cli
 
     private static bool IsHelp(string arg)
     {
-        return arg is "--help" or "-h" or "/?";
+        return string.Equals(arg, "--help", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(arg, "-h", StringComparison.OrdinalIgnoreCase)
+            || arg == "/?";
     }
 
     private static string? ValueAfter(string[] args, string key)
@@ -353,7 +397,10 @@ public static class Cli
             return OperationMode.All;
         }
 
-        return Enum.TryParse<OperationMode>(value, true, out var mode)
+        // Enum.TryParse принимает и числовые строки ВНЕ диапазона («--mode 99» давал
+        // (OperationMode)99: ни один режим не совпадал, ничего не применялось, exit 0 —
+        // ложный «успех»). IsDefined отсекает такие значения.
+        return Enum.TryParse<OperationMode>(value, true, out var mode) && Enum.IsDefined(mode)
             ? mode
             : throw new InvalidOperationException($"Неизвестный режим: {value}");
     }

@@ -171,8 +171,20 @@ public partial class Form1 : Form
         Controls.Add(root);
         WireDropTarget(this);
         WireDropTarget(root);
-        ScanPackageCatalog(false);
         SelectTab(0);
+    }
+
+    // Стартовые сканы — в OnShown, а не в конструкторе:
+    //  • ScanPlatforms раньше не вызывался вовсе (вкладка 0 уже выбрана —
+    //    SelectedIndexChanged не срабатывает) — список платформ был пуст до ручного
+    //    скана или ухода-возврата на вкладку;
+    //  • ScanPackageCatalog из конструктора гонялся с созданием ручки окна — если
+    //    фоновый скан успевал раньше, результат молча выбрасывался (каталог «0 пакетов»).
+    protected override void OnShown(EventArgs e)
+    {
+        base.OnShown(e);
+        ScanPlatforms();
+        ScanPackageCatalog(false);
     }
 
     private TabControl BuildTabs()
@@ -1028,8 +1040,10 @@ public partial class Form1 : Form
         verify.Width = 120;
         verify.Click += (_, _) =>
         {
-            OpenSelectedCatalogPackage();
-            InspectPackage();
+            if (OpenSelectedCatalogPackage())
+            {
+                InspectPackage();
+            }
         };
         _tips.SetToolTip(verify, "Открыть выбранный пакет и сразу проверить его целостность.");
         var verifyAll = SecondaryButton("Проверить все");
@@ -2110,17 +2124,20 @@ public partial class Form1 : Form
                 : $"⚠️ Итог: OK {res.Ok}, с проблемами {res.Bad} из {paths.Count}."));
     }
 
-    private void OpenSelectedCatalogPackage()
+    private bool OpenSelectedCatalogPackage()
     {
         if (_packageCatalog.SelectedItem is not string packagePath)
         {
             Append("Каталог: сначала выберите пакет.");
-            return;
+            return false;
         }
 
         _packageFolder.Text = packagePath;
         LoadPackage();
         SelectTab(1);
+        // Открытие удалось только если конфиг реально загрузился: иначе «Проверить»
+        // отработал бы по ПРЕДЫДУЩЕМУ открытому пакету и дал вердикт не о том.
+        return _config is not null;
     }
 
     private void WireDropTarget(Control control)
@@ -3001,8 +3018,20 @@ public partial class Form1 : Form
 
         // Назначение не должно быть внутри исходной папки — иначе копирование/перенос
         // пошёл бы сам в себя.
-        var dest = Path.GetFullPath(_portableRoot.Text.Trim()).TrimEnd('\\');
-        var srcFull = Path.GetFullPath(main).TrimEnd('\\');
+        string dest;
+        string srcFull;
+        try
+        {
+            // GetFullPath кидает на вводе вида "\\SERVER" (неполный UNC) — без catch
+            // исключение в click-handler валит приложение в стандартный диалог WinForms.
+            dest = Path.GetFullPath(_portableRoot.Text.Trim()).TrimEnd('\\');
+            srcFull = Path.GetFullPath(main).TrimEnd('\\');
+        }
+        catch (Exception ex)
+        {
+            Append("ОШИБКА: некорректный путь — " + ex.Message);
+            return;
+        }
         if (dest.Equals(srcFull, StringComparison.OrdinalIgnoreCase) ||
             dest.StartsWith(srcFull + "\\", StringComparison.OrdinalIgnoreCase))
         {
@@ -3012,8 +3041,19 @@ public partial class Form1 : Form
 
         // Папка назначения уже занята чужими данными (не наш пакет)? Предупреждаем —
         // чтобы не смешать сборку с посторонним содержимым.
-        if (Directory.Exists(dest) && !ConfigStore.HasHiddenManifest(dest) &&
-            Directory.EnumerateFileSystemEntries(dest).Any())
+        bool destHasForeignData;
+        try
+        {
+            destHasForeignData = Directory.Exists(dest) && !ConfigStore.HasHiddenManifest(dest) &&
+                Directory.EnumerateFileSystemEntries(dest).Any();
+        }
+        catch (Exception ex)
+        {
+            Append("ОШИБКА: нет доступа к папке назначения — " + ex.Message);
+            return;
+        }
+
+        if (destHasForeignData)
         {
             var ans = MessageBox.Show(this,
                 $"Папка «{dest}» уже содержит файлы и это не готовый пакет.\nСборка добавит данные сюда. Продолжить?",
@@ -3041,6 +3081,9 @@ public partial class Form1 : Form
         if (_busy)
         {
             Append("Подождите — предыдущая операция ещё выполняется.");
+            // Вызывающий мог уже показать оверлей прогресса ДО RunBusy — без onFinally
+            // он остался бы на экране навсегда (закрыть его некому).
+            onFinally?.Invoke();
             return;
         }
 
@@ -3106,6 +3149,7 @@ public partial class Form1 : Form
         try
         {
             var packageInput = _packageFolder.Text.Trim();
+            _config = null; // при неудачной загрузке не должен остаться СТАРЫЙ пакет
             _config = ConfigStore.Load(packageInput);
             var packageRoot = ConfigStore.ResolvePortableRoot(packageInput);
             _packageFolder.Text = packageRoot;
@@ -3240,6 +3284,14 @@ public partial class Form1 : Form
         var gameName = _gameName.Text.Trim();
         var gameFolder = _gameFolder.Text.Trim();
         var snapshot = _regSnapshot;
+        if (snapshot is null)
+        {
+            // Без снимка захват идёт только по токенам имени/папки — это рабочий режим
+            // для УЖЕ установленной игры, но пользователь должен понимать, что diff
+            // «до/после установки» не используется (мог просто забыть Шаг 1).
+            Append("Внимание: снимок reg (Шаг 1) не делался — ищу только по имени/папке игры, без сравнения «до/после».");
+        }
+
         Append("⏳ Сохраняю reg игры и пересобираю Run.cmd…");
 
         // Тяжёлый reg-экспорт + пересборку Run.cmd делаем в одном фоновом проходе
@@ -3259,6 +3311,9 @@ public partial class Form1 : Form
             },
             count =>
             {
+                // Снимок одноразовый: если оставить, захват СЛЕДУЮЩЕЙ игры посчитает
+                // diff против старого снимка и утащит ключи прошлой игры в новую.
+                _regSnapshot = null;
                 LoadPackage();
                 Append($"Reg-захват игры завершен. Файлов: {count}.");
             });
@@ -3552,19 +3607,28 @@ public partial class Form1 : Form
         return _config.FindProfile(name);
     }
 
+    private static string? _clientResourcesRootCache;
+
     private static string DetectClientResourcesRoot()
     {
+        // Кэш: обход всех готовых дисков (вкл. сетевые/съёмные — IsReady у «подвисшего»
+        // сетевого тома блокирует на секунды) выполнялся ДВАЖДЫ в UI-потоке на старте.
+        if (_clientResourcesRootCache is not null)
+        {
+            return _clientResourcesRootCache;
+        }
+
         foreach (var drive in DriveInfo.GetDrives().Where(drive => drive.IsReady))
         {
             var candidate = Path.Combine(drive.RootDirectory.FullName, "ClientResources");
             if (File.Exists(Path.Combine(candidate, "Autorun", "cmdow.exe")) ||
                 Directory.Exists(Path.Combine(candidate, "Autorun")))
             {
-                return candidate.TrimEnd('\\');
+                return _clientResourcesRootCache = candidate.TrimEnd('\\');
             }
         }
 
-        return "";
+        return _clientResourcesRootCache = "";
     }
 
     private void Warn(string message)
@@ -3575,9 +3639,26 @@ public partial class Form1 : Form
 
     private void Append(string message)
     {
+        // Колбэк приходит из ФОНОВЫХ операций (сборка/zip/проверка): если окно уже
+        // закрыли, Invoke на убитой ручке кидает ObjectDisposedException (краш при
+        // выходе), а при уничтоженной ручке InvokeRequired=false и AppendText
+        // выполнился бы прямо из фонового потока. Просто молчим.
+        if (IsDisposed || Disposing || !IsHandleCreated)
+        {
+            return;
+        }
+
         if (InvokeRequired)
         {
-            Invoke(new Action<string>(Append), message);
+            try
+            {
+                Invoke(new Action<string>(Append), message);
+            }
+            catch (Exception ex) when (ex is ObjectDisposedException or InvalidOperationException)
+            {
+                // окно закрылось между проверкой и Invoke — терять строку лога не страшно
+            }
+
             return;
         }
 
@@ -3674,9 +3755,21 @@ public partial class Form1 : Form
 
     private void UpdateZipProgress(int done, int total)
     {
+        if (IsDisposed || Disposing || !IsHandleCreated)
+        {
+            return;
+        }
+
         if (InvokeRequired)
         {
-            Invoke(new Action<int, int>(UpdateZipProgress), done, total);
+            try
+            {
+                Invoke(new Action<int, int>(UpdateZipProgress), done, total);
+            }
+            catch (Exception ex) when (ex is ObjectDisposedException or InvalidOperationException)
+            {
+            }
+
             return;
         }
 

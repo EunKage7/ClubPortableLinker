@@ -250,7 +250,19 @@ public static class PortableEngine
         Directory.CreateDirectory(Path.GetDirectoryName(target)!);
 
         var sourceExists = Directory.Exists(source) || File.Exists(source);
-        var sourceIsLink = sourceExists && File.GetAttributes(source).HasFlag(FileAttributes.ReparsePoint);
+        // ВИСЯЧИЙ junction (цель удалена/диск переключён): Directory.Exists и File.Exists
+        // оба возвращают false, но reparse-точка на месте и mklink упадёт «уже существует».
+        // GetAttributes видит атрибуты самой ссылки даже у битой — проверяем им.
+        bool sourceIsLink;
+        try
+        {
+            sourceIsLink = File.GetAttributes(source).HasFlag(FileAttributes.ReparsePoint);
+        }
+        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException or IOException or UnauthorizedAccessException)
+        {
+            sourceIsLink = false; // пути нет вовсе — нечего снимать
+        }
+
         if (sourceIsLink)
         {
             DeleteLinkOnly(source);
@@ -297,7 +309,14 @@ public static class PortableEngine
         {
             if (Directory.Exists(target) && Directory.EnumerateFileSystemEntries(target).Any())
             {
-                return BackupExistingSource(profile, source, kind, log);
+                // Цель уже непустая — типичный случай: прошлый перенос упал на середине,
+                // и в source остался ОСТАТОК (единственная копия недоехавших файлов).
+                // Раньше остаток тихо уезжал в _Replaced и пакет оставался неполным.
+                // Теперь ДОмерживаем остаток в цель (robocopy /MOVE в непустую папку).
+                log("  цель непустая — домерживаю остаток источника в portable-папку...");
+                MoveDirectoryResilient(source, target, log);
+                log("  остаток источника домержен в portable-папку");
+                return false;
             }
 
             if (Directory.Exists(target))
@@ -378,6 +397,21 @@ public static class PortableEngine
             return;
         }
 
+        // Висячий каталожный junction: Directory.Exists=false (цели нет), но снять его
+        // может только Directory.Delete — File.Delete на нём даёт AccessDenied.
+        try
+        {
+            if (File.GetAttributes(path).HasFlag(FileAttributes.Directory))
+            {
+                Directory.Delete(path);
+                return;
+            }
+        }
+        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+        {
+            return; // пути нет вовсе — удалять нечего
+        }
+
         File.Delete(path);
     }
 
@@ -429,6 +463,23 @@ public static class PortableEngine
         var batchExe = ToBatchPath(exe, profile);
         var batchWorkDir = ToBatchPath(workDir, profile);
 
+        // Батч может лежать НЕ в корне пакета (напр. .portable\Tools\*.cmd у BlueStacks).
+        // Тогда %~dp0 — это НЕ корень пакета, и все %~dp0-пути в шаблоне ломались бы:
+        // relink снёс бы живые junction и пересоздал их на несуществующие цели.
+        // Поэтому PORTABLE_ROOT считаем от реального расположения батча, а все пути
+        // внутри шаблона идут через %PORTABLE_ROOT% (см. ToBatchPath).
+        var portableRootFull = Path.GetFullPath(PathTokens.Expand(profile.PortableRoot, profile)).TrimEnd('\\');
+        var batchDir = (Path.GetDirectoryName(path) ?? portableRootFull).TrimEnd('\\');
+        var rootPrefix = "%~dp0";
+        if (!string.Equals(batchDir, portableRootFull, StringComparison.OrdinalIgnoreCase))
+        {
+            var relToRoot = Path.GetRelativePath(batchDir, portableRootFull);
+            if (relToRoot != ".")
+            {
+                rootPrefix = "%~dp0" + relToRoot.TrimEnd('\\') + "\\";
+            }
+        }
+
         log($"Командный файл: {batch.Name} -> {path}");
         if (!apply)
         {
@@ -448,7 +499,7 @@ public static class PortableEngine
             .AppendLine("rem ============================================================")
             .AppendLine()
             .AppendLine("rem --- Корень portable-пакета ---")
-            .AppendLine("set \"PORTABLE_ROOT=%~dp0\"")
+            .AppendLine($"set \"PORTABLE_ROOT={rootPrefix}\"")
             .AppendLine();
 
         AppendAdminCheck(content);
@@ -497,7 +548,7 @@ public static class PortableEngine
         content
             .AppendLine()
             .AppendLine("rem --- Спец-подготовка платформы (создается только для BlueStacks, RAGE MP, Launcher.ini) ---")
-            .AppendLine($"if exist \"%~dp0{ConfigStore.PortableDirectoryName}\\PortablePreRun.cmd\" call \"%~dp0{ConfigStore.PortableDirectoryName}\\PortablePreRun.cmd\" %*");
+            .AppendLine($"if exist \"%PORTABLE_ROOT%{ConfigStore.PortableDirectoryName}\\PortablePreRun.cmd\" call \"%PORTABLE_ROOT%{ConfigStore.PortableDirectoryName}\\PortablePreRun.cmd\" %*");
 
         content
             .AppendLine()
@@ -596,11 +647,15 @@ public static class PortableEngine
 
     private static void AppendAdminCheck(StringBuilder content)
     {
+        // Путь передаём через env-переменную (как в Stop.cmd): литерал '%~f0' в одинарных
+        // кавычках PS ломался на путях с апострофом (D:\Mike's Games\Run.cmd) — элевация
+        // тихо не происходила и скрипт завершался.
         content
             .AppendLine("rem --- Нужны права администратора (junction, реестр, службы) ---")
             .AppendLine("net session >nul 2>nul || (")
             .AppendLine("  echo Требуются права администратора, повышаю...")
-            .AppendLine("  powershell -NoProfile -Command \"Start-Process -Verb RunAs '%~f0'\" >nul 2>nul")
+            .AppendLine("  set \"CPL_SELF=%~f0\"")
+            .AppendLine("  powershell -NoProfile -Command \"Start-Process -Verb RunAs -FilePath $env:CPL_SELF\" >nul 2>nul")
             .AppendLine("  exit /b")
             .AppendLine(")");
     }
@@ -737,6 +792,12 @@ public static class PortableEngine
             .AppendLine("if exist \"%~1\\\" move \"%~1\" \"%~1.bak.%RANDOM%\" >nul 2>nul")
             .AppendLine("if not exist \"%~dp1\" mkdir \"%~dp1\" >nul 2>nul")
             .AppendLine("mklink %~3 \"%~1\" \"%~2\" >nul 2>nul")
+            .AppendLine("rem Контроль: если ссылка НЕ создана (папка занята и не отодвинулась) —")
+            .AppendLine("rem говорим об этом, иначе программа тихо пишет на C: и теряет данные при ребуте.")
+            .AppendLine("fsutil reparsepoint query \"%~1\" >nul 2>nul || (")
+            .AppendLine("  echo [ОШИБКА] Ссылка не создана: \"%~1\" — возможно, папка занята. Закройте программу (Stop.cmd) и запустите снова.")
+            .AppendLine("  echo %date% %time% relink FAIL \"%~1\" -^> \"%~2\" >> \"%PORTABLE_ROOT%relink-errors.log\"")
+            .AppendLine(")")
             .AppendLine("goto :eof");
     }
 
@@ -905,9 +966,11 @@ public static class PortableEngine
         var rootWithoutSlash = Path.GetFullPath(PathTokens.Expand(profile.PortableRoot, profile)).TrimEnd('\\');
         var root = rootWithoutSlash + "\\";
         var fullPath = Path.GetFullPath(path);
+        // %PORTABLE_ROOT% (а не %~dp0): переменная задаётся в начале каждого батча и
+        // указывает на корень пакета ДАЖЕ если сам батч лежит в подпапке (.portable\Tools).
         if (string.Equals(fullPath.TrimEnd('\\'), rootWithoutSlash, StringComparison.OrdinalIgnoreCase))
         {
-            return "%~dp0";
+            return "%PORTABLE_ROOT%";
         }
 
         if (!fullPath.StartsWith(root, StringComparison.OrdinalIgnoreCase))
@@ -915,7 +978,7 @@ public static class PortableEngine
             return ToKnownFolderBatchPath(fullPath);
         }
 
-        return @"%~dp0" + Path.GetRelativePath(rootWithoutSlash, fullPath);
+        return "%PORTABLE_ROOT%" + Path.GetRelativePath(rootWithoutSlash, fullPath);
     }
 
     private static void MoveDirectoryResilient(string source, string target, Action<string> log)
@@ -923,9 +986,13 @@ public static class PortableEngine
         var sourceRoot = Path.GetPathRoot(Path.GetFullPath(source));
         var targetRoot = Path.GetPathRoot(Path.GetFullPath(target));
 
-        // На одном томе Directory.Move — это мгновенное переименование.
+        // На одном томе Directory.Move — это мгновенное переименование. Но только
+        // если цели ещё НЕТ: в существующую папку Move не умеет — такой случай
+        // (домерживание остатка после упавшего переноса) идёт через robocopy ниже,
+        // он корректно сливает в непустую цель и на одном томе.
         if (!string.IsNullOrEmpty(sourceRoot) &&
-            string.Equals(sourceRoot, targetRoot, StringComparison.OrdinalIgnoreCase))
+            string.Equals(sourceRoot, targetRoot, StringComparison.OrdinalIgnoreCase) &&
+            !Directory.Exists(target))
         {
             Directory.Move(source, target);
             return;
@@ -942,7 +1009,10 @@ public static class PortableEngine
         log("  перенос между разными дисками — копирую содержимое (robocopy /MOVE)...");
         log("  для больших пакетов (BlueStacks и т.п.) это может занять несколько минут — НЕ закрывайте окно.");
         Directory.CreateDirectory(target);
-        var args = $"\"{source.TrimEnd('\\')}\" \"{target.TrimEnd('\\')}\" /E /MOVE /COPY:DAT /DCOPY:DAT /R:1 /W:1 /NFL /NDL /NP /NJH /NJS";
+        // /XJ обязателен: без него robocopy заходит ВНУТРЬ junction/symlink как в обычную
+        // папку и /MOVE удаляет файлы ЦЕЛИ ссылки (например, данные другого пакета на D:),
+        // а ссылка внутрь dest даёт бесконечное копирование до заполнения диска.
+        var args = $"\"{source.TrimEnd('\\')}\" \"{target.TrimEnd('\\')}\" /E /MOVE /COPY:DAT /DCOPY:DAT /XJ /R:1 /W:1 /NFL /NDL /NP /NJH /NJS";
         var exitCode = RunRobocopy(args);
 
         // robocopy: коды 0..7 — успех, 8 и выше — ошибка.
@@ -958,8 +1028,17 @@ public static class PortableEngine
         bool hasRemaining;
         try
         {
+            // Не заходим в reparse-точки: junction в источнике (исключён /XJ выше) —
+            // это не «оставшиеся файлы», а ссылка; обход внутрь дал бы ложный отказ
+            // или IOException на цикле ссылок.
+            var opts = new EnumerationOptions
+            {
+                RecurseSubdirectories = true,
+                AttributesToSkip = FileAttributes.ReparsePoint,
+                IgnoreInaccessible = true
+            };
             hasRemaining = Directory.Exists(source) &&
-                Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories).Any();
+                Directory.EnumerateFiles(source, "*", opts).Any();
         }
         catch
         {

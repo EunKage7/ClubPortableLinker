@@ -69,7 +69,8 @@ public static partial class RegistryGameCollector
             var full = gameFolder.Trim().TrimEnd('\\', '/');
             if (full.Length >= 4) { tokenSet.Add(full); }
             var leaf = Path.GetFileName(full);
-            if (leaf.Length >= 3) { tokenSet.Add(leaf); }
+            // leaf «Games»/«Launcher» и т.п. — родовое слово, не токен (см. IsStopToken).
+            if (leaf.Length >= 3 && !IsStopToken(leaf)) { tokenSet.Add(leaf); }
         }
 
         var tokens = (IReadOnlyCollection<string>)tokenSet.ToList();
@@ -82,6 +83,7 @@ public static partial class RegistryGameCollector
         // папок .portable\Registry, поэтому импорт не зависит от Enabled.
         var game = profile.Games.FirstOrDefault(g =>
             string.Equals(g.Name, gameName, StringComparison.OrdinalIgnoreCase));
+        var gameIsNew = game is null;
         if (game is null)
         {
             game = new GameModule { Name = gameName, Enabled = true };
@@ -113,7 +115,7 @@ public static partial class RegistryGameCollector
 
                 changedKeys.Add(key);
                 if (!IsTooBroadRegistryKey(key) &&
-                    (MatchesAnyToken(key, tokens) || MatchesAnyToken(afterFingerprint, tokens) || IsLikelyLauncherRegistryKey(key)))
+                    (MatchesAnyToken(key, tokens) || MatchesAnyToken(afterFingerprint, tokens) || IsLikelyLauncherRegistryKey(key, profile)))
                 {
                     keys.Add(key);
                 }
@@ -176,6 +178,12 @@ public static partial class RegistryGameCollector
         }
 
         game.RegistryFiles = game.RegistryFiles.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        // Неудачный захват не должен мутировать пакет: пустой свежесозданный модуль убираем.
+        if (gameIsNew && exported == 0 && game.RegistryFiles.Count == 0)
+        {
+            profile.Games.Remove(game);
+        }
+
         ConfigStore.SavePackage(portableRoot, config);
         if (exported == 0 && changedKeys.Count > 0)
         {
@@ -420,6 +428,17 @@ public static partial class RegistryGameCollector
         yield return @"HKEY_CURRENT_USER\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall";
         yield return @"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall";
         yield return @"HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall";
+        // Install-ветки лаунчеров: ключ игры здесь называется appid-числом, а путь к игре
+        // лежит в ЗНАЧЕНИИ (InstallDir=D:\Games\<игра>). Без этих корней игра без
+        // before-снимка не находилась вовсе (/k ищет только по именам ключей).
+        yield return @"HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node\Ubisoft\Launcher\Installs";
+        yield return @"HKEY_LOCAL_MACHINE\SOFTWARE\Ubisoft\Launcher\Installs";
+        yield return @"HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node\GOG.com\Games";
+        yield return @"HKEY_LOCAL_MACHINE\SOFTWARE\GOG.com\Games";
+        yield return @"HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node\Electronic Arts";
+        yield return @"HKEY_LOCAL_MACHINE\SOFTWARE\Electronic Arts";
+        yield return @"HKEY_CURRENT_USER\SOFTWARE\Wargaming.net";
+        yield return @"HKEY_CURRENT_USER\SOFTWARE\Lesta";
     }
 
     private static IEnumerable<string> ParseRegQueryKeys(string output, string token)
@@ -443,44 +462,92 @@ public static partial class RegistryGameCollector
         }
     }
 
-    private static bool IsLikelyLauncherRegistryKey(string key)
+    // Вендорные ветки лаунчеров + маркеры, по которым понимаем, относится ли вендор
+    // к ЭТОМУ пакету. Раньше вайтлист был безусловным: Steam, работающий в фоне во
+    // время захвата игры Ubisoft, постоянно меняет HKCU\Software\Valve\Steam — его
+    // ключи попадали в diff и экспортировались в пакет Ubisoft (кросс-контаминация).
+    private static readonly (string[] Prefixes, string[] Markers)[] LauncherVendorBranches =
+    [
+        (["SOFTWARE\\Epic Games"], ["Epic"]),
+        (["SOFTWARE\\Electronic Arts", "SOFTWARE\\EA Games", "SOFTWARE\\Origin"], ["EA", "Electronic Arts", "Origin"]),
+        (["SOFTWARE\\Roberts Space Industries", "SOFTWARE\\Cloud Imperium Games"], ["RSI", "Star Citizen", "Roberts", "Cloud Imperium"]),
+        (["SOFTWARE\\RAGE-MP"], ["RAGE"]),
+        (["SOFTWARE\\Valve\\Steam"], ["Steam"]),
+        (["SOFTWARE\\Ubisoft"], ["Ubisoft", "Uplay"]),
+        (["SOFTWARE\\GOG.com"], ["GOG"]),
+        (["SOFTWARE\\Blizzard Entertainment"], ["Battle.net", "Blizzard"]),
+        (["SOFTWARE\\Rockstar Games"], ["Rockstar"]),
+        (["SOFTWARE\\Wargaming.net"], ["Wargaming"]),
+        (["SOFTWARE\\Lesta"], ["Lesta"]),
+        (["SOFTWARE\\Battlestate Games"], ["Battlestate", "BattleState", "Tarkov"]),
+        (["SOFTWARE\\Mail.Ru", "SOFTWARE\\VK Play", "SOFTWARE\\VKPlay"], ["VK Play", "VKPlay"]),
+        (["SOFTWARE\\Innova", "SOFTWARE\\4game"], ["4game", "Innova"]),
+        (["SOFTWARE\\FACEIT"], ["FACEIT"])
+    ];
+
+    private static bool IsLikelyLauncherRegistryKey(string key, AppProfile profile)
     {
         var normalized = NormalizeRegistryKey(key);
-        var usefulPrefixes = new[]
+        foreach (var (prefixes, markers) in LauncherVendorBranches)
         {
-            @"HKEY_CURRENT_USER\SOFTWARE\Epic Games",
-            @"HKEY_LOCAL_MACHINE\SOFTWARE\Epic Games",
-            @"HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node\Epic Games",
-            @"HKEY_CURRENT_USER\SOFTWARE\Electronic Arts",
-            @"HKEY_LOCAL_MACHINE\SOFTWARE\Electronic Arts",
-            @"HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node\Electronic Arts",
-            @"HKEY_CURRENT_USER\SOFTWARE\EA Games",
-            @"HKEY_LOCAL_MACHINE\SOFTWARE\EA Games",
-            @"HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node\EA Games",
-            @"HKEY_CURRENT_USER\SOFTWARE\Roberts Space Industries",
-            @"HKEY_LOCAL_MACHINE\SOFTWARE\Roberts Space Industries",
-            @"HKEY_CURRENT_USER\SOFTWARE\Cloud Imperium Games",
-            @"HKEY_LOCAL_MACHINE\SOFTWARE\Cloud Imperium Games",
-            @"HKEY_CURRENT_USER\SOFTWARE\RAGE-MP",
-            @"HKEY_LOCAL_MACHINE\SOFTWARE\RAGE-MP",
-            @"HKEY_CURRENT_USER\SOFTWARE\Valve\Steam",
-            @"HKEY_LOCAL_MACHINE\SOFTWARE\Valve\Steam"
-        };
+            var hit = prefixes.Any(prefix =>
+                normalized.StartsWith(@"HKEY_CURRENT_USER\" + prefix, StringComparison.OrdinalIgnoreCase) ||
+                normalized.StartsWith(@"HKEY_LOCAL_MACHINE\" + prefix, StringComparison.OrdinalIgnoreCase) ||
+                normalized.StartsWith(@"HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node\" + prefix["SOFTWARE\\".Length..], StringComparison.OrdinalIgnoreCase));
+            if (!hit)
+            {
+                continue;
+            }
 
-        return usefulPrefixes.Any(prefix => normalized.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
+            // Вендор должен относиться к платформе пакета: имя профиля или его
+            // ссылки упоминают вендора. Чужой (фоновый) лаунчер — не берём.
+            return markers.Any(marker => ProfileMentions(profile, marker));
+        }
+
+        return false;
+    }
+
+    private static bool ProfileMentions(AppProfile profile, string marker)
+    {
+        if (profile.Name.Contains(marker, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return profile.Links.Any(link =>
+            link.Source.Contains(marker, StringComparison.OrdinalIgnoreCase) ||
+            link.Target.Contains(marker, StringComparison.OrdinalIgnoreCase));
     }
 
     private static bool IsTooBroadRegistryKey(string key)
     {
+        // Контейнеры тоже блокируем: инсталлятор создаёт Uninstall\<Игра> — у РОДИТЕЛЯ
+        // Uninstall меняется отпечаток (в нём имена подключей), он матчится токеном и
+        // раньше экспортировался ЦЕЛИКОМ — uninstall-записи всего софта уезжали в пакет
+        // и реимпортировались на каждом клиенте. Конкретный подключ Uninstall\<Игра>
+        // (точное равенство не совпадает) по-прежнему разрешён.
         var normalized = NormalizeRegistryKey(key).TrimEnd('\\');
-        var broadKeys = new[]
+        var roots = new[]
         {
             @"HKEY_CURRENT_USER\SOFTWARE",
             @"HKEY_LOCAL_MACHINE\SOFTWARE",
             @"HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node"
         };
 
-        return broadKeys.Any(item => string.Equals(normalized, item, StringComparison.OrdinalIgnoreCase));
+        foreach (var root in roots)
+        {
+            if (string.Equals(normalized, root, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(normalized, root + @"\Microsoft", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(normalized, root + @"\Microsoft\Windows", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(normalized, root + @"\Microsoft\Windows\CurrentVersion", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(normalized, root + @"\Microsoft\Windows\CurrentVersion\Uninstall", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(normalized, root + @"\Classes", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static string SanitizeText(string value)
@@ -541,18 +608,24 @@ public static partial class RegistryGameCollector
 
     private static IReadOnlyCollection<string> BuildTokens(string name)
     {
+        // Стоп-фильтр тот же, что в сборщике: родовое слово («Online», «Games»,
+        // «Launcher»…) как reg-токен утаскивает ключи посторонних вендоров.
         var values = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        values.Add(name.Trim());
+        var trimmed = name.Trim();
+        if (!IsStopToken(trimmed))
+        {
+            values.Add(trimmed);
+        }
 
         var compact = Regex.Replace(name, @"[^\p{L}\p{Nd}]+", "");
-        if (compact.Length >= 3)
+        if (compact.Length >= 3 && !IsStopToken(compact))
         {
             values.Add(compact);
         }
 
         foreach (Match match in WordRegex().Matches(name))
         {
-            if (match.Value.Length >= 3)
+            if (match.Value.Length >= 3 && !IsStopToken(match.Value))
             {
                 values.Add(match.Value);
             }
@@ -561,9 +634,19 @@ public static partial class RegistryGameCollector
         return values.ToList();
     }
 
+    private static bool IsStopToken(string token)
+    {
+        return AutoPortableBuilder.TokenStopWords.Contains(token, StringComparer.OrdinalIgnoreCase);
+    }
+
     private static bool MatchesAnyToken(string value, IReadOnlyCollection<string> tokens)
     {
-        return tokens.Any(token => value.Contains(token, StringComparison.OrdinalIgnoreCase));
+        // Слэши нормализуем: Ubisoft пишет InstallDir с прямыми (D:/Games/...), а токен
+        // из папки игры приходит с обратными (D:\Games\...) — без нормализации
+        // полный путь не матчился никогда.
+        var normalized = value.Replace('/', '\\');
+        return tokens.Any(token =>
+            normalized.Contains(token.Replace('/', '\\'), StringComparison.OrdinalIgnoreCase));
     }
 
     private static bool ProcessReturnsZero(string fileName, string arguments)

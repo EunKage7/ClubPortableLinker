@@ -21,7 +21,10 @@ public static class RecipeStore
     private static readonly JsonSerializerOptions Json = new()
     {
         WriteIndented = true,
-        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
+        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
+        // Как в ConfigStore: рецепт, написанный руками в camelCase, без этого молча
+        // десериализовался в ПУСТОЙ профиль (Name="", без ссылок).
+        PropertyNameCaseInsensitive = true
     };
 
     private static string? _localDir;
@@ -151,6 +154,19 @@ public static class RecipeStore
         profile.Tasks ??= [];
         profile.Services ??= [];
         profile.Games ??= [];
+
+        // Битый/чужой JSON без имени и без единого правила — это не рецепт:
+        // молча создать из него «пустой пакет» хуже, чем честно отказать.
+        if (string.IsNullOrWhiteSpace(profile.Name))
+        {
+            throw new InvalidOperationException($"Рецепт без имени профиля (Name): {path}");
+        }
+
+        if (profile.Links.Count == 0 && profile.Batches.Count == 0 && profile.RegistryFiles.Count == 0)
+        {
+            throw new InvalidOperationException($"Рецепт «{profile.Name}» пуст (нет ссылок/запуска/reg): {path}");
+        }
+
         return profile;
     }
 
