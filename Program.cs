@@ -20,6 +20,9 @@ static class Program
             form.Size = new System.Drawing.Size(w, h);
             form.Show();
             form.SelectTabForRender(tab);
+            // Пятый доп-аргумент "hover" — отрисовать все кнопки в hover-состоянии
+            // (для визуальной проверки углов скруглённых кнопок при наведении).
+            if (args.Length >= 6 && args[5] == "hover") form.DevForceHoverForRender();
             for (var i = 0; i < 8; i++) Application.DoEvents();
             using var bmp = new System.Drawing.Bitmap(form.ClientSize.Width, form.ClientSize.Height);
             form.DrawToBitmap(bmp, new System.Drawing.Rectangle(0, 0, bmp.Width, bmp.Height));

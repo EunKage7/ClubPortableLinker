@@ -2119,6 +2119,26 @@ public partial class Form1 : Form
     // Только для dev-рендера (--render-ui): переключить вкладку из Program.
     public void SelectTabForRender(int index) => SelectTab(index);
 
+    // Только для dev-рендера (--render-ui ... hover): выставить hover на всех
+    // кнопках, чтобы проверить отрисовку их углов в наведённом состоянии.
+    public void DevForceHoverForRender()
+    {
+        void Walk(Control c)
+        {
+            foreach (Control k in c.Controls)
+            {
+                if (k is RoundedButton rb)
+                {
+                    rb.ForceHoverForRender();
+                }
+
+                Walk(k);
+            }
+        }
+
+        Walk(this);
+    }
+
     // Только для dev-рендера (--render-icon): нарисовать иконку в реальных мелких
     // размерах (16/24/32/48) на шахматном фоне, чтобы оценить чёткость.
     public static void RenderIconStripForDev(string path)
@@ -2873,35 +2893,47 @@ public partial class Form1 : Form
             base.OnMouseLeave(e);
         }
 
-        // Физически вырезаем углы через Region: за пределами скруглённого
-        // прямоугольника пиксели контрола ОТСУТСТВУЮТ, поэтому сквозь углы
-        // видно реальный фон родителя (в т.ч. ГРАДИЕНТ шапки/сайдбара) пиксель
-        // в пиксель. Так навсегда уходят «чёрные боксы» в углах кнопок, которые
-        // раньше возникали из-за заливки углов плоским Parent.BackColor поверх
-        // градиента.
-        protected override void OnResize(EventArgs e)
+        // Только для dev-рендера: показать кнопку в наведённом состоянии.
+        public void ForceHoverForRender()
         {
-            base.OnResize(e);
-            ApplyRoundedRegion();
+            _hover = true;
+            Invalidate();
         }
 
-        protected override void OnHandleCreated(EventArgs e)
+        // Углы скруглённой кнопки больше НЕ вырезаем через Region — он давал
+        // «лесенку» по краю и тёмные квадраты в углах при наведении (частичная
+        // перерисовка кнопки поверх прозрачного родителя оставляла мусор). Вместо
+        // этого кнопка при каждой отрисовке сама дорисовывает ТОЧНЫЙ фон под собой:
+        // если она лежит на градиентной шапке/сайдбаре — берём тот же градиент
+        // срезом по своей позиции, и углы сливаются с фоном пиксель-в-пиксель при
+        // любых цветах. Иначе — сплошной фон родителя.
+        private void PaintBackdrop(Graphics g)
         {
-            base.OnHandleCreated(e);
-            ApplyRoundedRegion();
-        }
-
-        private void ApplyRoundedRegion()
-        {
-            if (Width <= 1 || Height <= 1)
+            Color top = Color.Empty, bottom = Color.Empty;
+            var ancHeight = 0;
+            Control? anc = null;
+            for (var c = Parent; c != null; c = c.Parent)
             {
+                if (c is GradientGrid gg) { top = gg.GradTop; bottom = gg.GradBottom; ancHeight = gg.Height; anc = gg; break; }
+                if (c is GradientPanel gp) { top = gp.GradTop; bottom = gp.GradBottom; ancHeight = gp.Height; anc = gp; break; }
+            }
+
+            if (anc != null && ancHeight > 0 && IsHandleCreated && anc.IsHandleCreated)
+            {
+                // Y кнопки в координатах градиентного предка — чтобы взять ровно
+                // тот кусок вертикального градиента, что проходит под кнопкой.
+                var originY = anc.PointToClient(PointToScreen(Point.Empty)).Y;
+                using var brush = new LinearGradientBrush(
+                    new Rectangle(0, -originY, Math.Max(1, Width), ancHeight),
+                    top, bottom, LinearGradientMode.Vertical);
+                g.FillRectangle(brush, ClientRectangle);
                 return;
             }
 
-            var rect = new Rectangle(0, 0, Width, Height);
-            var radius = Math.Min(Radius, Math.Max(1, Math.Min(rect.Width, rect.Height) / 2));
-            using var path = RoundedRect(rect, radius);
-            Region = new Region(path);
+            var flat = EraseColor != Color.Empty ? EraseColor : (Parent?.BackColor ?? BackColor);
+            if (flat.A == 0) { flat = Bg; }
+            using var solid = new SolidBrush(flat);
+            g.FillRectangle(solid, ClientRectangle);
         }
 
         protected override void OnPaint(PaintEventArgs e)
@@ -2909,12 +2941,7 @@ public partial class Form1 : Form
             var g = e.Graphics;
             g.SmoothingMode = SmoothingMode.AntiAlias;
 
-            var eraseColor = EraseColor != Color.Empty ? EraseColor : (Parent?.BackColor ?? BackColor);
-            if (eraseColor.A > 0)
-            {
-                using var background = new SolidBrush(eraseColor);
-                g.FillRectangle(background, ClientRectangle);
-            }
+            PaintBackdrop(g);
 
             var rect = new Rectangle(0, 0, Math.Max(1, Width - 1), Math.Max(1, Height - 1));
             var radius = Math.Min(Radius, Math.Max(1, Math.Min(rect.Width, rect.Height) / 2));
