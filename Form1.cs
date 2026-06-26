@@ -6,25 +6,26 @@ namespace ClubPortableLinker;
 
 public partial class Form1 : Form
 {
-    // Глубокая фиолетово-сливовая база + тёплый оранжево-янтарный акцент (комплементарная пара).
-    private static readonly Color Bg = Color.FromArgb(14, 9, 26);
-    private static readonly Color BgTop = Color.FromArgb(28, 17, 52);
-    private static readonly Color BgBottom = Color.FromArgb(10, 6, 20);
-    private static readonly Color HeaderBg = Color.FromArgb(22, 13, 42);
-    private static readonly Color HeaderTop = Color.FromArgb(38, 22, 70);
-    private static readonly Color HeaderBottom = Color.FromArgb(20, 12, 38);
-    private static readonly Color Surface = Color.FromArgb(34, 22, 58);
-    private static readonly Color SurfaceTop = Color.FromArgb(44, 29, 74);
-    private static readonly Color SurfaceBottom = Color.FromArgb(28, 18, 50);
-    private static readonly Color Surface2 = Color.FromArgb(46, 31, 78);
-    private static readonly Color Border = Color.FromArgb(74, 52, 122);
-    private static readonly Color TextPrimary = Color.FromArgb(245, 241, 252);
-    private static readonly Color TextMuted = Color.FromArgb(165, 154, 196);
-    private static readonly Color Accent = Color.FromArgb(255, 106, 66);
-    private static readonly Color Accent2 = Color.FromArgb(255, 190, 92);
-    private static readonly Color AccentPink = Color.FromArgb(236, 72, 153);
-    private static readonly Color Success = Color.FromArgb(52, 226, 196);
-    private static readonly Color Warning = Color.FromArgb(251, 191, 36);
+    // Строгий тёмный графит (нейтрально-тёмная база) + один тёплый оранжевый акцент.
+    // Без фиолета и лишней пестроты — солиднее для рабочего инструмента.
+    private static readonly Color Bg = Color.FromArgb(18, 19, 22);
+    private static readonly Color BgTop = Color.FromArgb(30, 32, 36);
+    private static readonly Color BgBottom = Color.FromArgb(13, 14, 17);
+    private static readonly Color HeaderBg = Color.FromArgb(24, 25, 29);
+    private static readonly Color HeaderTop = Color.FromArgb(40, 42, 47);
+    private static readonly Color HeaderBottom = Color.FromArgb(20, 21, 25);
+    private static readonly Color Surface = Color.FromArgb(30, 32, 36);
+    private static readonly Color SurfaceTop = Color.FromArgb(40, 42, 47);
+    private static readonly Color SurfaceBottom = Color.FromArgb(25, 27, 31);
+    private static readonly Color Surface2 = Color.FromArgb(43, 45, 50);
+    private static readonly Color Border = Color.FromArgb(68, 71, 80);
+    private static readonly Color TextPrimary = Color.FromArgb(240, 241, 244);
+    private static readonly Color TextMuted = Color.FromArgb(154, 158, 168);
+    private static readonly Color Accent = Color.FromArgb(255, 120, 58);
+    private static readonly Color Accent2 = Color.FromArgb(255, 170, 92);
+    private static readonly Color AccentPink = Color.FromArgb(255, 140, 78);
+    private static readonly Color Success = Color.FromArgb(74, 200, 150);
+    private static readonly Color Warning = Color.FromArgb(238, 178, 70);
 
     private readonly TextBox _appName = new();
     private readonly TextBox _portableRoot = new();
@@ -484,8 +485,8 @@ public partial class Form1 : Form
             Dock = DockStyle.Fill,
             ColumnCount = 1,
             RowCount = 3,
-            GradTop = Color.FromArgb(30, 18, 58),
-            GradBottom = Color.FromArgb(16, 10, 32),
+            GradTop = Color.FromArgb(34, 36, 41),
+            GradBottom = Color.FromArgb(18, 19, 23),
             Padding = new Padding(14, 16, 14, 14)
         };
         sidebar.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
@@ -552,8 +553,8 @@ public partial class Form1 : Form
         var panel = new GradientPanel
         {
             Dock = DockStyle.Fill,
-            GradTop = Color.FromArgb(30, 18, 58),
-            GradBottom = Color.FromArgb(16, 10, 32),
+            GradTop = Color.FromArgb(34, 36, 41),
+            GradBottom = Color.FromArgb(18, 19, 23),
             Padding = new Padding(16, 14, 16, 16)
         };
 
@@ -561,7 +562,7 @@ public partial class Form1 : Form
         var console = new Panel
         {
             Dock = DockStyle.Fill,
-            BackColor = Color.FromArgb(15, 9, 30),
+            BackColor = Color.FromArgb(16, 17, 20),
             Padding = new Padding(10, 8, 6, 8)
         };
 
@@ -571,8 +572,8 @@ public partial class Form1 : Form
         _log.ReadOnly = true;
         _log.WordWrap = true;
         _log.Font = new Font("Consolas", 9.4F);
-        _log.BackColor = Color.FromArgb(15, 9, 30);
-        _log.ForeColor = Color.FromArgb(214, 226, 250);
+        _log.BackColor = Color.FromArgb(16, 17, 20);
+        _log.ForeColor = Color.FromArgb(220, 222, 228);
         _log.BorderStyle = BorderStyle.None;
 
         console.Controls.Add(_log);
@@ -1954,9 +1955,9 @@ public partial class Form1 : Form
             TextAlign = ContentAlignment.MiddleLeft,
             Padding = new Padding(16, 0, 6, 0),
             Margin = new Padding(0, 0, 0, 8),
-            BackColor = Color.FromArgb(26, 16, 50),
-            HoverBackColor = Color.FromArgb(40, 26, 72),
-            EraseColor = Color.FromArgb(23, 14, 45),
+            BackColor = Color.FromArgb(32, 34, 39),
+            HoverBackColor = Color.FromArgb(48, 50, 56),
+            EraseColor = Color.FromArgb(24, 25, 29),
             ForeColor = TextMuted,
             Font = new Font("Segoe UI Semibold", 10F)
         };
@@ -2075,7 +2076,7 @@ public partial class Form1 : Form
         {
             Dock = DockStyle.Fill,
             AccentTop = Success,
-            AccentBottom = Color.FromArgb(80, 200, 255),
+            AccentBottom = Accent2,
             Padding = new Padding(20, 14, 12, 14),
             Margin = new Padding(0, 8, 0, 0)
         };
@@ -2176,8 +2177,8 @@ public partial class Form1 : Form
             button.ForeColor = active ? Color.White : TextMuted;
             if (button is RoundedButton rounded)
             {
-                rounded.BackColor = active ? Accent : Color.FromArgb(26, 16, 50);
-                rounded.HoverBackColor = active ? Accent : Color.FromArgb(40, 26, 72);
+                rounded.BackColor = active ? Accent : Color.FromArgb(32, 34, 39);
+                rounded.HoverBackColor = active ? Accent : Color.FromArgb(48, 50, 56);
                 rounded.GradientEnd = active ? Accent2 : Color.Empty;
                 rounded.BorderColor = Color.Empty;
                 rounded.HoverBorderColor = active ? Color.Empty : Color.FromArgb(120, Accent);
@@ -4081,7 +4082,7 @@ public partial class Form1 : Form
             var overlay = new Panel
             {
                 Size = new Size(480, 80),
-                BackColor = Color.FromArgb(44, 26, 80),
+                BackColor = Color.FromArgb(44, 46, 51),
                 Padding = new Padding(16, 12, 16, 14),
                 Visible = false
             };
@@ -4187,8 +4188,8 @@ public partial class Form1 : Form
             ScrollBars = ScrollBars.Both,
             WordWrap = false,
             Font = new Font("Consolas", 9.6F),
-            BackColor = Color.FromArgb(15, 9, 30),
-            ForeColor = Color.FromArgb(214, 226, 250),
+            BackColor = Color.FromArgb(16, 17, 20),
+            ForeColor = Color.FromArgb(220, 222, 228),
             BorderStyle = BorderStyle.None,
             Text = _log.Text
         };
