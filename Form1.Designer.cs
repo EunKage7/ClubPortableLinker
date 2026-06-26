@@ -31,7 +31,8 @@ partial class Form1
         components = new System.ComponentModel.Container();
         AutoScaleMode = AutoScaleMode.Font;
         ClientSize = new Size(1380, 870);
-        MinimumSize = new Size(1120, 700);
+        // Минимум поднят: при 1120 центр ужимался до ~590px и кнопки/карточки резались.
+        MinimumSize = new Size(1200, 740);
         Text = "Club Portable Linker";
     }
 

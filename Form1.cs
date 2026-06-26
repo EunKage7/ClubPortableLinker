@@ -167,9 +167,13 @@ public partial class Form1 : Form
             RowCount = 1,
             BackColor = Bg
         };
-        workspace.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 208));
-        workspace.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        workspace.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 320));
+        // Сайдбар — фикс (кнопки навигации фикс-ширины), а центр и журнал РЕЗИНОВЫЕ
+        // (Percent): на любом мониторе/DPI пропорция держится, а не фиксированные
+        // пиксели журнала съедают рабочий центр. Раньше центр ужимался до ~590px и
+        // кнопки/карточки резались.
+        workspace.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 216));
+        workspace.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 74));
+        workspace.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 26));
 
         _tabs = BuildTabs();
         workspace.Controls.Add(BuildSidebar(), 0, 0);
@@ -225,6 +229,18 @@ public partial class Form1 : Form
         catch
         {
             // сохранение геометрии не должно мешать закрытию
+        }
+
+        // Ручные таймер/тултип не в components — гасим явно, чтобы не текли хэндлы.
+        try
+        {
+            _diskTimer?.Stop();
+            _diskTimer?.Dispose();
+            _tips.Dispose();
+        }
+        catch
+        {
+            // освобождение ресурсов не должно мешать закрытию
         }
 
         base.OnFormClosing(e);
@@ -307,9 +323,10 @@ public partial class Form1 : Form
         };
         header.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 64));
         header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        // Шире, чтобы три чипа влезали целиком и у левого («ClientResources»)
-        // не обрезался контур.
-        header.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 500));
+        // AutoSize: колонка сама подгоняется под суммарную ширину пилюль (они тоже
+        // саморазмерные). Раньше фикс-500px не вмещали все чипы на FHD — крайний
+        // («ClientResources»/имя ПК) резался.
+        header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
 
         header.Controls.Add(new LogoMark { Dock = DockStyle.Fill, BackColor = Color.Transparent, Margin = new Padding(0, 0, 8, 0) }, 0, 0);
 
@@ -332,23 +349,30 @@ public partial class Form1 : Form
             Dock = DockStyle.Fill,
             Font = new Font("Segoe UI Semibold", 14F),
             ForeColor = TextPrimary,
+            AutoEllipsis = true,
             TextAlign = ContentAlignment.BottomLeft
         }, 0, 0);
         title.Controls.Add(new Label
         {
-            Text = "Portable-пакеты, junction, registry и проверка для клубных Windows/CCBOOT-схем",
+            Text = "Portable-пакеты, junction и реестр для клубных CCBOOT-систем",
             Dock = DockStyle.Fill,
             Font = new Font("Segoe UI", 9F),
             ForeColor = TextMuted,
+            // AutoEllipsis: на узком окне подзаголовок не переносится на 2-ю строку
+            // (которая срезалась по нижней кромке шапки), а ужимается в «…».
+            AutoEllipsis = true,
             TextAlign = ContentAlignment.TopLeft
         }, 0, 1);
         header.Controls.Add(title, 1, 0);
 
         var pills = new FlowLayoutPanel
         {
-            Dock = DockStyle.Fill,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            Anchor = AnchorStyles.Right,
             FlowDirection = FlowDirection.RightToLeft,
             WrapContents = false,
+            Margin = Padding.Empty,
             BackColor = Color.Transparent
         };
         var admin = IsCurrentProcessAdministrator();
@@ -372,10 +396,11 @@ public partial class Form1 : Form
         // диск — главная причина «всё сломалось». Обновляется таймером.
         _diskPill = new PillChip("диск…", TextMuted)
         {
-            Width = 150,
+            AutoFit = true,
             Height = 32,
             Margin = new Padding(9, 6, 0, 0)
         };
+        _diskPill.FitWidth();
         _tips.SetToolTip(_diskPill, "Игровой диск (несистемный, с макс. свободным местом). Сюда собираются пакеты и ставятся игры.");
         pills.Controls.Add(_diskPill);
         UpdateDiskPill();
@@ -386,11 +411,12 @@ public partial class Form1 : Form
         // Индикатор «операция выполняется» — виден из любой вкладки.
         _busyPill = new PillChip("⏳ выполняется…", Accent)
         {
-            Width = 150,
+            AutoFit = true,
             Height = 32,
             Margin = new Padding(9, 6, 0, 0),
             Visible = false
         };
+        _busyPill.FitWidth();
         pills.Controls.Add(_busyPill);
 
         header.Controls.Add(pills, 2, 0);
@@ -502,7 +528,9 @@ public partial class Form1 : Form
             Dock = DockStyle.Fill,
             BackColor = HeaderBg,
             ForeColor = TextMuted,
-            Padding = new Padding(22, 0, 0, 0),
+            Padding = new Padding(22, 0, 12, 0),
+            // На узком окне подсказка обрезается видимым «…», а не молча по краю.
+            AutoEllipsis = true,
             TextAlign = ContentAlignment.MiddleLeft
         };
     }
@@ -723,7 +751,7 @@ public partial class Form1 : Form
         }, 0, 3);
         grid.SetColumnSpan(grid.GetControlFromPosition(0, 3)!, 2);
 
-        return Card("Способ A — поставить с нуля (установщик/URL)", grid);
+        return Card("Способ A — поставить с нуля", grid);
     }
 
     private Control BuildFolderVariant()
@@ -772,7 +800,7 @@ public partial class Form1 : Form
         }, 0, 3);
         grid.SetColumnSpan(grid.GetControlFromPosition(0, 3)!, 2);
 
-        return Card("Способ B — уже установлено (готовая папка)", grid);
+        return Card("Способ B — уже установлено", grid);
     }
 
     private GroupBox BuildApplyPanel()
@@ -1781,6 +1809,7 @@ public partial class Form1 : Form
             Dock = DockStyle.Fill,
             Font = new Font("Segoe UI Semibold", 11.5F),
             ForeColor = TextPrimary,
+            AutoEllipsis = true,
             TextAlign = ContentAlignment.MiddleLeft
         }, 0, 0);
         content.Dock = DockStyle.Fill;
@@ -1888,7 +1917,9 @@ public partial class Form1 : Form
         return new RoundedButton
         {
             Text = text,
-            Height = 54,
+            // 60px + шрифт 11pt: длинные тексты («Шаг 1 — снимок и запустить
+            // установщик») влезают в строку без обрезки в «…» на узком окне.
+            Height = 60,
             Dock = DockStyle.Fill,
             Radius = 12,
             Margin = new Padding(2, 6, 2, 4),
@@ -1896,7 +1927,8 @@ public partial class Form1 : Form
             HoverBackColor = Accent2,
             GradientEnd = Accent2,
             ForeColor = Color.White,
-            Font = new Font("Segoe UI Semibold", 11.5F)
+            Multiline = true,
+            Font = new Font("Segoe UI Semibold", 11F)
         };
     }
 
@@ -1945,12 +1977,16 @@ public partial class Form1 : Form
 
     private static Control StatusPill(string text, Color marker)
     {
-        return new PillChip(text, marker)
+        // Ширину считаем по РЕАЛЬНОМУ измерению текста текущим шрифтом, а не по
+        // «len*8» — та формула не знала про DPI и резала текст на 125/150%.
+        var pill = new PillChip(text, marker)
         {
-            Width = Math.Max(120, text.Length * 8 + 40),
+            AutoFit = true,
             Height = 32,
             Margin = new Padding(9, 6, 0, 0)
         };
+        pill.FitWidth();
+        return pill;
     }
 
     private sealed class PillChip : Control
@@ -1962,6 +1998,18 @@ public partial class Form1 : Form
         {
             get => _marker;
             set { _marker = value; Invalidate(); }
+        }
+
+        // Подгонять ширину под текст текущим шрифтом. Для живых пилюль (диск/busy)
+        // ширина пересчитывается при каждой смене текста — иначе длинный текст
+        // («1863 ГБ свободно») упирался в фикс-ширину и резался.
+        public bool AutoFit { get; set; }
+
+        public void FitWidth()
+        {
+            var w = TextRenderer.MeasureText(Text, Font).Width + 44;
+            Width = Math.Max(96, w);
+            Parent?.PerformLayout();
         }
 
         public PillChip(string text, Color marker)
@@ -1976,6 +2024,10 @@ public partial class Form1 : Form
         protected override void OnTextChanged(EventArgs e)
         {
             base.OnTextChanged(e);
+            if (AutoFit)
+            {
+                FitWidth();
+            }
             Invalidate();
         }
 
@@ -2788,6 +2840,9 @@ public partial class Form1 : Form
         public Color EraseColor { get; set; } = Color.Empty;
         public bool Glow { get; set; }
         public Color GlowColor { get; set; } = Accent;
+        // Перенос на 2 строки вместо обрезки в «…» (для крупных кнопок-действий
+        // с длинным текстом на узком окне).
+        public bool Multiline { get; set; }
 
         public RoundedButton()
         {
@@ -2899,10 +2954,18 @@ public partial class Form1 : Form
                 g.DrawPath(pen, path);
             }
 
-            var flags = TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.WordEllipsis;
-            flags |= TextAlign == ContentAlignment.MiddleLeft
-                ? TextFormatFlags.Left
-                : TextFormatFlags.HorizontalCenter;
+            var flags = TextFormatFlags.VerticalCenter;
+            if (Multiline)
+            {
+                flags |= TextFormatFlags.WordBreak | TextFormatFlags.HorizontalCenter;
+            }
+            else
+            {
+                flags |= TextFormatFlags.EndEllipsis | TextFormatFlags.WordEllipsis;
+                flags |= TextAlign == ContentAlignment.MiddleLeft
+                    ? TextFormatFlags.Left
+                    : TextFormatFlags.HorizontalCenter;
+            }
 
             var textRect = new Rectangle(
                 rect.X + Padding.Left,
@@ -3474,6 +3537,14 @@ public partial class Form1 : Form
     private void StartGameRegistryCapture()
     {
         // Мастер «добавить игру»: проверки + понятная пошаговая инструкция, затем снимок.
+        // Гард до показа модального окна: иначе двойной клик открывал два диалога,
+        // и второй снимок мог наполовину перезаписать _regSnapshot.
+        if (_busy)
+        {
+            Append("Подождите — операция уже выполняется.");
+            return;
+        }
+
         if (_config is null || string.IsNullOrWhiteSpace(_packageFolder.Text))
         {
             Warn("Сначала откройте портабл-платформу на вкладке «Пакет» (кнопка «Открыть пакет»).");
@@ -3540,6 +3611,11 @@ public partial class Form1 : Form
                     packageInput, profileName, gameName, gameFolder, snapshot, Append);
 
                 var config = ConfigStore.Load(packageInput);
+                if (string.IsNullOrWhiteSpace(profileName) && config.Profiles.Count == 0)
+                {
+                    throw new InvalidOperationException("В пакете нет собранных сборок — откройте корректную portable-папку.");
+                }
+
                 var profile = string.IsNullOrWhiteSpace(profileName)
                     ? config.Profiles[0]
                     : config.FindProfile(profileName);
