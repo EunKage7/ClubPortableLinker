@@ -1878,6 +1878,12 @@ public partial class Form1 : Form
         };
     }
 
+    // Спокойный терракот вместо неонового Accent: рядовые действия («Проверить
+    // пакет», «Открыть папку» и т.п.) не должны кричать. Яркий Accent оставлен
+    // главной CTA (MagicButton) и активной вкладке.
+    private static readonly Color MainBtn = Color.FromArgb(176, 86, 50);
+    private static readonly Color MainBtnHover = Color.FromArgb(206, 104, 62);
+
     private static RoundedButton MainButton(string text)
     {
         return new RoundedButton
@@ -1887,9 +1893,9 @@ public partial class Form1 : Form
             Height = 34,
             Radius = 9,
             Margin = new Padding(4, 3, 4, 3),
-            BackColor = Accent,
-            HoverBackColor = Accent2,
-            ForeColor = Color.White,
+            BackColor = MainBtn,
+            HoverBackColor = MainBtnHover,
+            ForeColor = Color.FromArgb(248, 240, 234),
             Font = new Font("Segoe UI Semibold", 9.5F)
         };
     }
