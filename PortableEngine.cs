@@ -526,8 +526,8 @@ public static class PortableEngine
 
         content
             .AppendLine()
-            .AppendLine("rem --- Импорт reg-файлов (.portable\\Registry, Registry, Reg) ---");
-        AppendRegistryImports(content);
+            .AppendLine("rem --- Импорт reg-файлов из manifest (платформа + игры) ---");
+        AppendRegistryImports(content, profile);
 
         if (profile.Tasks.Count > 0)
         {
@@ -808,16 +808,17 @@ public static class PortableEngine
             && string.Equals(Path.GetFullPath(path).TrimEnd('\\'), root.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase);
     }
 
-    private static void AppendRegistryImports(StringBuilder content)
+    private static void AppendRegistryImports(StringBuilder content, AppProfile profile)
     {
-        // ВАЖНО: тремя явными строками, а НЕ вложенным `for %%G in (...) do ... for /r "%%~G"`.
-        // Вложенная форма с FOR-переменной в качестве корня `for /r` в cmd находит 0 файлов
-        // (проверено) — из-за этого Run.cmd молча НЕ импортировал reg. Прямой `for /r "путь"`
-        // работает корректно.
-        foreach (var folder in new[] { ConfigStore.PortableDirectoryName + "\\Registry", "Registry", "Reg" })
+        // Импортируем ТОЛЬКО reg-файлы, перечисленные в manifest (платформа + включённые
+        // игры), а НЕ всё дерево по маске *.reg. Run.cmd само-элевируется до админа, поэтому
+        // слепой импорт любого подброшенного в папку пакета .reg (расшаренный game-disk,
+        // сетевые рецепты, чужой zip) = запись произвольных веток реестра под админом на
+        // каждом старте. Явный список из manifest закрывает эту дыру, не теряя reg игр.
+        foreach (var registryFile in profile.AllRegistryFiles())
         {
-            content.AppendLine(
-                $"if exist \"%PORTABLE_ROOT%{folder}\" for /r \"%PORTABLE_ROOT%{folder}\" %%r in (*.reg) do reg import \"%%r\" >nul 2>nul");
+            var regPath = ToBatchPath(PathTokens.Expand(registryFile, profile), profile);
+            content.AppendLine($"if exist \"{regPath}\" reg import \"{regPath}\" >nul 2>nul");
         }
     }
 
@@ -1067,7 +1068,9 @@ public static class PortableEngine
         }
         catch
         {
-            // Не смогли посчитать размер — не блокируем перенос, robocopy сам сообщит об ошибке.
+            // Не смогли посчитать размер — не блокируем перенос, но и не молчим:
+            // иначе при нехватке места /MOVE расщепит данные между дисками незаметно.
+            log("  внимание: не удалось оценить размер источника — проверка свободного места пропущена, перенос на свой риск.");
             return;
         }
 
@@ -1084,6 +1087,7 @@ public static class PortableEngine
         }
         catch
         {
+            log($"  внимание: не удалось узнать свободное место на {targetRoot.TrimEnd('\\')} — проверка пропущена.");
             return;
         }
 

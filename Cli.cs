@@ -15,6 +15,12 @@ public static class Cli
                 return 0;
             }
 
+            // Опечатка в флаге раньше проглатывалась молча. Самое опасное: `--saf`
+            // вместо `--safe` тихо НЕ включал SafeMode, и junction (mklink /J)
+            // ставились на живой системе под админом. Теперь любой неизвестный
+            // «--флаг» — явная ошибка (значения путей/имён с «--» не начинаются).
+            ValidateKnownFlags(args);
+
             var configPath = ValueAfter(args, "--config") ?? "profiles.json";
 
             if (args.Contains("--init", StringComparer.OrdinalIgnoreCase))
@@ -116,12 +122,22 @@ public static class Cli
                 var outputZip = ValueAfter(args, "--out")
                     ?? Path.Combine(Path.GetDirectoryName(packageRoot)!, Path.GetFileName(packageRoot.TrimEnd('\\')) + "-portable.zip");
                 Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outputZip))!);
-                if (File.Exists(outputZip))
+                // Пишем во временный файл и заменяем атомарно только после успеха.
+                // Иначе при падении CreateZip (нет места под большой Steam-пакет, обрыв
+                // записи на \\SERVER) старый рабочий ZIP уже удалён, а новый битый/отсутствует.
+                var tmpZip = outputZip + "." + Guid.NewGuid().ToString("N") + ".tmp";
+                try
                 {
-                    File.Delete(outputZip);
+                    PackageArchiver.CreateZip(packageRoot, tmpZip, output.WriteLine);
+                    File.Move(tmpZip, outputZip, overwrite: true);
                 }
-
-                PackageArchiver.CreateZip(packageRoot, outputZip, output.WriteLine);
+                finally
+                {
+                    if (File.Exists(tmpZip))
+                    {
+                        try { File.Delete(tmpZip); } catch { /* недописанный tmp подчищаем по возможности */ }
+                    }
+                }
                 output.WriteLine($"ZIP создан: {Path.GetFullPath(outputZip)}");
                 // Сюда доходим либо без ошибок, либо с явным --force («упаковать как
                 // есть»). ZIP создан — это успех; раньше с --force возвращалось 2,
@@ -353,6 +369,30 @@ public static class Cli
         return string.Equals(arg, "--help", StringComparison.OrdinalIgnoreCase)
             || string.Equals(arg, "-h", StringComparison.OrdinalIgnoreCase)
             || arg == "/?";
+    }
+
+    // Whitelist всех допустимых «--флагов». Используется для отбраковки опечаток:
+    // в этом CLI значения (пути/имена/режимы) с «--» не начинаются, поэтому любой
+    // токен на «--», которого тут нет, — это опечатка или лишний аргумент.
+    private static readonly HashSet<string> KnownFlags = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "--help", "--init", "--pack", "--auto-folder", "--apply-package", "--verify-package",
+        "--export-zip", "--reg-snapshot", "--reg-capture", "--fs-snapshot", "--capture-delta",
+        "--preview", "--save-recipe", "--list-recipes", "--update-recipes", "--apply-recipe", "--plan",
+        "--config", "--source", "--destination", "--name", "--clientresources", "--sharedresources",
+        "--package", "--profile", "--mode", "--snapshot", "--out", "--game", "--game-folder", "--recipe", "--shared",
+        "--safe", "--no-links", "--no-apply", "--apply", "--force", "--json", "--yes"
+    };
+
+    private static void ValidateKnownFlags(string[] args)
+    {
+        foreach (var token in args)
+        {
+            if (token.StartsWith("--", StringComparison.Ordinal) && !KnownFlags.Contains(token))
+            {
+                throw new InvalidOperationException($"Неизвестный аргумент: {token}. Список — в --help.");
+            }
+        }
     }
 
     private static string? ValueAfter(string[] args, string key)

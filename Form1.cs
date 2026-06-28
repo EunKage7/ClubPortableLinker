@@ -3913,17 +3913,31 @@ public partial class Form1 : Form
                 return;
             }
 
-            dynamic shell = Activator.CreateInstance(shellType)!;
-            var shortcut = shell.CreateShortcut(lnkPath);
-            shortcut.TargetPath = runCmd;
-            shortcut.WorkingDirectory = root;
-            if (!string.IsNullOrWhiteSpace(iconExe) && File.Exists(iconExe))
+            // COM-объекты WScript.Shell освобождаем явно в finally — иначе на каждое
+            // «Создать ярлык» оставались два неосвобождённых RCW (утечка до GC).
+            object? shell = null;
+            object? shortcut = null;
+            try
             {
-                shortcut.IconLocation = iconExe + ",0";
-            }
+                shell = Activator.CreateInstance(shellType)!;
+                dynamic dShell = shell;
+                shortcut = dShell.CreateShortcut(lnkPath);
+                dynamic dShortcut = shortcut;
+                dShortcut.TargetPath = runCmd;
+                dShortcut.WorkingDirectory = root;
+                if (!string.IsNullOrWhiteSpace(iconExe) && File.Exists(iconExe))
+                {
+                    dShortcut.IconLocation = iconExe + ",0";
+                }
 
-            shortcut.Description = profile.Name + " (portable)";
-            shortcut.Save();
+                dShortcut.Description = profile.Name + " (portable)";
+                dShortcut.Save();
+            }
+            finally
+            {
+                if (shortcut is not null) System.Runtime.InteropServices.Marshal.FinalReleaseComObject(shortcut);
+                if (shell is not null) System.Runtime.InteropServices.Marshal.FinalReleaseComObject(shell);
+            }
 
             Append($"✔ Ярлык на рабочем столе: {lnkPath}"
                 + (File.Exists(iconExe) ? $" (иконка из {Path.GetFileName(iconExe)})" : " (иконка по умолчанию)"));

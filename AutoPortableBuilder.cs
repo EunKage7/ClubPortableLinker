@@ -553,6 +553,14 @@ public static partial class AutoPortableBuilder
         AddKnownDirectoryLink(profile, Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "EpicGamesLauncher"), log);
         AddKnownDirectoryLink(profile, Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "UnrealEngine"), log);
 
+        // Epic Online Services — отдельный redist/сервис. Без него EOS-игры (Fortnite
+        // и т.п.) на бездиске доустанавливают EOS при КАЖДОМ старте (C: откатывается).
+        // Кладём его состояние на game-disk junction'ом. Common Files физически лежит
+        // внутри Program Files, поэтому маппится через корень ProgramFiles/ProgramFilesX86.
+        AddKnownDirectoryLink(profile, Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonProgramFiles), "Epic Online Services"), log);
+        AddKnownDirectoryLink(profile, Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonProgramFilesX86), "Epic Online Services"), log);
+        AddKnownDirectoryLink(profile, Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "EpicOnlineServices"), log);
+
         profile.Batches.Add(new BatchRule
         {
             Name = "Epic",
@@ -562,7 +570,7 @@ public static partial class AutoPortableBuilder
             WorkingDirectory = Path.GetDirectoryName(epicExe) ?? epicRoot
         });
 
-        log("Epic Games: ссылки (папка лаунчера с играми, ProgramData\\Epic, LocalAppData) и запуск через Run.cmd.");
+        log("Epic Games: ссылки (папка лаунчера с играми, ProgramData\\Epic, LocalAppData, Epic Online Services) и запуск через Run.cmd.");
         return true;
     }
 
@@ -1415,7 +1423,11 @@ exit /b 0
 
     private static bool IsEpic(AppProfile profile, IEnumerable<string> paths)
     {
-        return profile.Name.Contains("Epic", StringComparison.OrdinalIgnoreCase)
+        // «Epic Games», а не голое «Epic»: иначе мод/игра со словом Epic в названии
+        // (EpicLoot, Epic Battle Fantasy) на ПК с установленным Epic подтверждала бы
+        // Epic и утаскивала весь реальный каталог Epic Games в чужой пакет.
+        return profile.Name.Equals("Epic", StringComparison.OrdinalIgnoreCase)
+            || profile.Name.StartsWith("Epic Games", StringComparison.OrdinalIgnoreCase)
             || paths.Any(path => path.Contains("Epic Games", StringComparison.OrdinalIgnoreCase) ||
                                  path.Contains("EpicGamesLauncher", StringComparison.OrdinalIgnoreCase))
             || profile.Links.Any(link => link.Source.Contains("Epic Games", StringComparison.OrdinalIgnoreCase) ||
