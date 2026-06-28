@@ -2884,12 +2884,28 @@ exit /b 0
         foreach (var entry in after)
         {
             var name = Path.GetFileName(entry.Path);
-            if (!MatchesTokens(name, tokens))
+
+            // Временные папки установщика — мимо в любом случае.
+            if (IsTemporaryInstallerFolder(entry.Path))
             {
                 continue;
             }
 
-            if (!beforeMap.TryGetValue(entry.Path, out var old) || entry.LastWriteUtc > old.LastWriteUtc.AddSeconds(2))
+            // НОВАЯ папка верхнего уровня (её не было до установки) = почти наверняка
+            // создана установкой. Берём ВСЕ такие, НЕ фильтруя по имени приложения:
+            // иначе вендорные папки, чьё имя не совпадает с названием проги
+            // («Blackmagic Design» для DaVinci, «Epic Games» и т.п.), отсекались —
+            // и снимок «до/после» находил 0 папок.
+            if (!beforeMap.TryGetValue(entry.Path, out var old))
+            {
+                changed.Add(entry.Path);
+                continue;
+            }
+
+            // Уже существовавшая папка лишь изменена по времени: берём только если имя
+            // совпадает с приложением — чтобы не тащить чужие папки, которые ОС или
+            // другой софт случайно задели между снимками.
+            if (entry.LastWriteUtc > old.LastWriteUtc.AddSeconds(2) && MatchesTokens(name, tokens))
             {
                 changed.Add(entry.Path);
             }
