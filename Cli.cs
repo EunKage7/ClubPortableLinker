@@ -288,10 +288,10 @@ public static class Cli
             if (args.Contains("--apply-recipe", StringComparer.OrdinalIgnoreCase))
             {
                 var recipePath = ValueAfter(args, "--recipe")
-                    ?? throw new InvalidOperationException("Не указан --recipe (путь к json) для --apply-recipe.");
+                    ?? throw new InvalidOperationException("Не указан --recipe (имя рецепта или путь к json) для --apply-recipe.");
                 var destination = ValueAfter(args, "--destination")
                     ?? throw new InvalidOperationException("Не указан --destination для --apply-recipe.");
-                var recipeProfile = RecipeStore.Load(recipePath);
+                var recipeProfile = ResolveRecipeProfile(recipePath, ValueAfter(args, "--shared"));
                 // В назначении уже живёт пакет? Перезапись манифеста стёрла бы его
                 // профили/захваченные reg игр без следа — требуем явный --force.
                 if (ConfigStore.HasHiddenManifest(destination) &&
@@ -428,6 +428,27 @@ public static class Cli
         }
 
         return string.IsNullOrWhiteSpace(name) ? config.Profiles[0] : config.FindProfile(name);
+    }
+
+    // --recipe принимает И путь к .json, И имя рецепта (как в GUI-списке): если файла
+    // по такому пути нет — ищем рецепт с таким именем в локальной + сетевой папках.
+    private static AppProfile ResolveRecipeProfile(string recipeArg, string? sharedOverride)
+    {
+        if (File.Exists(recipeArg))
+        {
+            return RecipeStore.Load(recipeArg);
+        }
+
+        var shared = sharedOverride ?? LinkerSettings.Load().SharedRecipesPath;
+        var match = RecipeStore.List(shared)
+            .FirstOrDefault(r => string.Equals(r.Name, recipeArg, StringComparison.OrdinalIgnoreCase));
+        if (match is not null)
+        {
+            return RecipeStore.Load(match.Path);
+        }
+
+        throw new InvalidOperationException(
+            $"Рецепт не найден: «{recipeArg}». Укажите имя из --list-recipes или путь к .json.");
     }
 
     private static OperationMode ParseMode(string? value)
