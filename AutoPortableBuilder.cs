@@ -202,7 +202,12 @@ public static partial class AutoPortableBuilder
 
         if (changed.Count == 0)
         {
-            throw new InvalidOperationException("После установки не найдено новых папок. Укажите главную папку программы и соберите через режим уже установленной программы.");
+            throw new InvalidOperationException(
+                "После установки не найдено новых папок. Две причины: (1) установка ещё НЕ завершилась — " +
+                "дождитесь окна «Finish/Готово» установщика и нажмите «Шаг 2» снова; (2) программа уже была " +
+                "установлена ДО снимка — тогда новых папок и не появится. Для уже установленной программы " +
+                "используйте «Способ B»: укажите её главную папку (напр. C:\\Program Files\\<Вендор>\\<Программа>) " +
+                "и нажмите «Собрать портабл автоматически».");
         }
 
         return BuildFromPaths(appName, portableRoot, changed, tokens, request.ClientResourcesRoot, request.SharedResourcesRoot, request.ApplyAfterBuild, log);
