@@ -524,6 +524,7 @@ public static partial class AutoPortableBuilder
         if (IsRiot(profile, paths) && AddRiotRules(profile, paths, log)) { confirmed.Add("Riot"); }
         if (IsFaceit(profile, paths) && AddFaceitRules(profile, paths, log)) { confirmed.Add("FACEIT"); }
         if (IsEpic(profile, paths) && AddEpicRules(profile, paths, log)) { confirmed.Add("Epic"); }
+        if (IsDaVinci(profile, paths) && AddDaVinciRules(profile, paths, log)) { confirmed.Add("DaVinci"); }
         if (IsBattleNet(profile, paths) && AddBattleNetRules(profile, paths, log)) { confirmed.Add("BattleNet"); }
         if (IsEa(profile, paths) && AddEaRules(profile, paths, log)) { confirmed.Add("EA"); }
         if (IsUbisoft(profile, paths) && AddUbisoftRules(profile, paths, log)) { confirmed.Add("Ubisoft"); }
@@ -577,6 +578,53 @@ public static partial class AutoPortableBuilder
 
         log("Epic Games: ссылки (папка лаунчера с играми, ProgramData\\Epic, LocalAppData, Epic Online Services) и запуск через Run.cmd.");
         return true;
+    }
+
+    // DaVinci Resolve (Blackmagic Design): вся папка Blackmagic Design (с Resolve и
+    // компонентами) + данные и БАЗА ПРОЕКТОВ (ProgramData/AppData/LocalAppData) +
+    // запуск Resolve.exe. Проекты Resolve по умолчанию лежат в Disk Database в
+    // %AppData%\Blackmagic Design — поэтому её обязательно тащим в пакет.
+    private static bool AddDaVinciRules(AppProfile profile, IReadOnlyCollection<string> paths, Action<string> log)
+    {
+        var exe = FindNamedExe(profile, paths, "Resolve.exe",
+        [
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Blackmagic Design"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "Blackmagic Design")
+        ]);
+
+        if (string.IsNullOrWhiteSpace(exe))
+        {
+            return false;
+        }
+
+        var root = FindParentDirectoryNamed(exe, "Blackmagic Design") ?? Path.GetDirectoryName(exe) ?? "";
+        AddKnownDirectoryLink(profile, root, log); // вся Blackmagic Design (DaVinci Resolve внутри)
+        AddKnownDirectoryLink(profile, Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Blackmagic Design"), log);
+        AddKnownDirectoryLink(profile, Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Blackmagic Design"), log);      // база проектов
+        AddKnownDirectoryLink(profile, Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Blackmagic Design"), log);
+
+        profile.Batches.Add(new BatchRule
+        {
+            Name = "DaVinci",
+            Path = @"{portableRoot}\Run.cmd",
+            TargetExe = exe,
+            Arguments = "%*",
+            WorkingDirectory = Path.GetDirectoryName(exe) ?? root
+        });
+
+        log("DaVinci Resolve: ссылки (Blackmagic Design в Program Files, ProgramData, AppData [база проектов], LocalAppData) и запуск Resolve.exe через Run.cmd.");
+        return true;
+    }
+
+    private static bool IsDaVinci(AppProfile profile, IEnumerable<string> paths)
+    {
+        // «DaVinci» (специфичное слово) или путь Blackmagic Design / DaVinci Resolve —
+        // не цепляемся за общие слова, чтобы не подтвердить чужое.
+        return profile.Name.Contains("DaVinci", StringComparison.OrdinalIgnoreCase)
+            || paths.Any(path => path.Contains("Blackmagic Design", StringComparison.OrdinalIgnoreCase) ||
+                                 path.Contains("DaVinci Resolve", StringComparison.OrdinalIgnoreCase))
+            || profile.Links.Any(link => link.Source.Contains("Blackmagic Design", StringComparison.OrdinalIgnoreCase) ||
+                                         link.Source.Contains("DaVinci Resolve", StringComparison.OrdinalIgnoreCase));
     }
 
     // Battle.net (Blizzard): папка лаунчера + конфиги (в Blizzard Entertainment лежит
@@ -1918,6 +1966,19 @@ exit /b 0
             }
         }
 
+        if (confirmed.Contains("DaVinci"))
+        {
+            foreach (var key in new[]
+            {
+                @"HKEY_CURRENT_USER\SOFTWARE\Blackmagic Design",
+                @"HKEY_LOCAL_MACHINE\SOFTWARE\Blackmagic Design",
+                @"HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node\Blackmagic Design"
+            })
+            {
+                ExportRegistryKey(profile, portableRoot, key, log);
+            }
+        }
+
         if (confirmed.Contains("BattleNet"))
         {
             foreach (var key in new[]
@@ -2163,9 +2224,13 @@ exit /b 0
             "Reg", "Registry", "AppData", "ProgramData", "ProgramFiles", "ProgramFilesX86", "Local", "Roaming", "UserLocal", "UserRoaming"
         };
 
+        // ВАЖНО: голый «*.bat в корне» — НЕ признак portable-layout. Куча обычных
+        // программ носит .bat рядом с exe (DaVinci Resolve: CaptureLogs.bat,
+        // DaVinciRemotePanel.bat и др.), из-за чего их папка ложно опознавалась как
+        // готовый портабл → сборка шла не по той ветке и сваливала файлы в корень
+        // пакета. Layout определяем строго: по layout-папкам или паре config.ini + Data.
         return markerNames.Any(name => Directory.Exists(Path.Combine(root, name)))
-            || (File.Exists(Path.Combine(root, "config.ini")) && Directory.Exists(Path.Combine(root, "Data")))
-            || Directory.EnumerateFiles(root, "*.bat", SearchOption.TopDirectoryOnly).Any();
+            || (File.Exists(Path.Combine(root, "config.ini")) && Directory.Exists(Path.Combine(root, "Data")));
     }
 
     private static bool AddLauncherIniLayout(AppProfile profile, string portableRoot, string appName, Action<string> log)

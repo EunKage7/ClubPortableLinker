@@ -48,6 +48,7 @@ public static class LauncherCatalog
         new("BattleState (Tarkov)", "Escape from Tarkov (BsgLauncher)", [@"C:\Battlestate Games\BsgLauncher", PF("Battlestate Games", "BsgLauncher")]),
         new("VK Play", "VK Play (Warface, STALCRAFT…)", [LAD("VKPlay"), LAD("GameCenter"), PF("VK", "VK Play")]),
         new("4game", "4game / Innova (L2, Aion, BDO)", [PFx86("4game"), PF("4game"), LAD("4game")]),
+        new("DaVinci Resolve", "Blackmagic DaVinci Resolve (Resolve.exe)", [PF("Blackmagic Design", "DaVinci Resolve"), PFx86("Blackmagic Design", "DaVinci Resolve")]),
     ];
 
     public static string? TryLocate(KnownLauncher launcher)
