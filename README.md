@@ -41,7 +41,7 @@ Run.cmd за секунду возвращает всё на место, а да
 - Сам узнаёт типовые лаунчеры и добавляет их папки и ветки реестра:
   Steam, Epic, Battle.net, EA App, Ubisoft Connect, GOG, Rockstar,
   Riot/Valorant, RAGE MP, FACEIT, BlueStacks, Wargaming, Lesta,
-  BattleState/Tarkov, VK Play, 4game.
+  BattleState/Tarkov, VK Play, 4game, DaVinci Resolve.
 - Захват reg конкретной игры — чтобы на клиенте лаунчер видел игру
   с D:\Games как установленную.
 - Проверка пакета с вердиктом «исправен / проблем N».
